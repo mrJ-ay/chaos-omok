@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>카오스 슈퍼오목 온라인</title>
+<script src="/socket.io/socket.io.js"></script>
+<style>
+  body {
+    background: #0d1117; color: #fff; font-family: sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 100vh; margin: 0;
+  }
+  #header { margin-bottom: 12px; text-align: center; }
+  .link-box {
+    background: #161b22; padding: 8px 16px; border-radius: 6px;
+    border: 1px solid #30363d; margin-top: 8px; font-size: 13px; color: #58a6ff;
+  }
+  #canvas-container {
+    position: relative; box-shadow: 0 0 30px rgba(255, 136, 0, 0.3);
+    border: 3px solid #f0883e; border-radius: 8px;
+  }
+  canvas { background: #deb887; cursor: pointer; display: block; }
+  #log { margin-top: 10px; height: 25px; font-weight: bold; color: #ff7b72; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <h2 style="margin: 0 0 6px 0;">☄️ 카오스 슈퍼오목: 태양계 발동</h2>
+  <div id="status">상대 접속 대기 중...</div>
+  <div class="link-box" id="share-link">초대 링크 생성 중...</div>
+</div>
+
+<div id="canvas-container">
+  <canvas id="board" width="600" height="600"></canvas>
+</div>
+<div id="log"></div>
+
+<script>
+const socket = io();
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+const statusEl = document.getElementById('status');
+const logEl = document.getElementById('log');
+const shareLinkEl = document.getElementById('share-link');
+
+const GRID_SIZE = 15;
+const CELL = canvas.width / (GRID_SIZE + 1);
+
+let board = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0));
+let myRole = null; // 1: 흑, 2: 백
+let currentTurn = 1;
+let currentRoom = null;
+
+// URL에서 방 ID 추출 (?room=xxxx) 없으면 랜덤 생성
+const urlParams = new URLSearchParams(window.location.search);
+let roomId = urlParams.get('room');
+if (!roomId) {
+  roomId = Math.random().toString(36).substring(2, 8);
+  window.history.replaceState(null, '', `?room=${roomId}`);
+}
+currentRoom = roomId;
+shareLinkEl.innerText = `친구 초대 주소: ${window.location.href}`;
+
+socket.emit('joinRoom', roomId);
+
+socket.on('init', (data) => {
+  myRole = data.role;
+  board = data.board;
+  currentTurn = data.turn;
+  updateStatus();
+  drawBoard();
+});
+
+socket.on('playerCount', (count) => {
+  if (count < 2) {
+    statusEl.innerText = `내 돌: ${myRole === 1 ? '흑돌(선공)' : '백돌'} | 친구 기다리는 중 (1/2)`;
+  } else {
+    updateStatus();
+  }
+});
+
+socket.on('updateState', (data) => {
+  board = data.board;
+  currentTurn = data.turn;
+  if (data.log) logEl.innerText = data.log;
+  updateStatus();
+  drawBoard();
+
+  if (data.winner) {
+    setTimeout(() => {
+      alert(data.winner === myRole ? '🎉 승리했습니다!' : '💀 패배했습니다!');
+    }, 100);
+  }
+});
+
+socket.on('roomFull', () => {
+  alert('이미 방에 2명이 가득 찼습니다.');
+});
+
+function updateStatus() {
+  const roleName = myRole === 1 ? '흑돌' : '백돌';
+  const turnName = currentTurn === 1 ? '흑돌' : '백돌';
+  const isMyTurn = myRole === currentTurn;
+  statusEl.innerText = `내 돌: ${roleName} | 현재 턴: ${turnName} ${isMyTurn ? '(내 차례!)' : '(상대 차례)'}`;
+}
+
+function drawBoard() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = '#6b4f2c';
+  ctx.lineWidth = 1.5;
+
+  for (let i = 0; i < GRID_SIZE; i++) {
+    const p = (i + 1) * CELL;
+    ctx.beginPath(); ctx.moveTo(CELL, p); ctx.lineTo(GRID_SIZE * CELL, p); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(p, CELL); ctx.lineTo(p, GRID_SIZE * CELL); ctx.stroke();
+  }
+
+  for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_SIZE; c++) {
+      const val = board[r][c];
+      const x = (c + 1) * CELL, y = (r + 1) * CELL;
+      if (val === 1 || val === 2) {
+        ctx.beginPath();
+        ctx.arc(x, y, CELL * 0.4, 0, Math.PI * 2);
+        ctx.fillStyle = val === 1 ? '#111' : '#f5f5f5';
+        ctx.fill();
+      } else if (val === 10 || val === 20) {
+        const rad = CELL * 1.25;
+        const grad = ctx.createRadialGradient(x, y, rad * 0.2, x, y, rad);
+        grad.addColorStop(0, val === 10 ? '#ff4b1f' : '#fff275');
+        grad.addColorStop(1, val === 10 ? '#1f1c18' : '#ff6b35');
+        ctx.beginPath();
+        ctx.arc(x, y, rad, 0, Math.PI * 2);
+        ctx.fillStyle = grad;
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('SUN', x, y + 4);
+      }
+    }
+  }
+}
+
+canvas.addEventListener('click', (e) => {
+  if (myRole !== currentTurn) return;
+  const rect = canvas.getBoundingClientRect();
+  const c = Math.round((e.clientX - rect.left) / CELL) - 1;
+  const r = Math.round((e.clientY - rect.top) / CELL) - 1;
+  if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE && board[r][c] === 0) {
+    socket.emit('makeMove', { roomId: currentRoom, r, c });
+  }
+});
+</script>
+</body>
+</html>
