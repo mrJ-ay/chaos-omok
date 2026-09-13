@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>카오스 슈퍼오목: 지각 변동</title>
+<title>카오스 슈퍼오목</title>
 <script src="/socket.io/socket.io.js"></script>
 <style>
   body {
@@ -25,10 +25,9 @@
   canvas { background: #deb887; cursor: pointer; display: block; }
   #log { margin-top: 10px; height: 26px; font-weight: bold; color: #ff7b72; text-align: center; }
   
-  /* 지진 제어 패널 */
   #quake-panel {
     background: #1c2128; border: 1px solid #ff5722; border-radius: 8px;
-    padding: 12px; width: 170px; display: flex; flex-direction: column; gap: 8px;
+    padding: 10px; width: 150px; display: flex; flex-direction: column; gap: 6px;
   }
   .quake-title { font-size: 13px; font-weight: bold; color: #ff7043; text-align: center; }
   .quake-btn {
@@ -38,7 +37,6 @@
   .quake-btn:hover { background: #e74c3c; }
   .quake-btn:disabled { background: #444; color: #888; cursor: not-allowed; }
 
-  /* 강한 화면 흔들림 애니메이션 */
   .earthquake-shake {
     animation: eqShake 0.7s cubic-bezier(.36,.07,.19,.97) both;
   }
@@ -53,7 +51,7 @@
 <body>
 
 <div id="header">
-  <h2 style="margin: 0 0 4px 0;">🌋 카오스 슈퍼오목: 지각 변동(지진)</h2>
+  <h2 style="margin: 0 0 4px 0;">☄️ 카오스 슈퍼오목</h2>
   <div id="status">상대 대기 중...</div>
   <div class="link-box" id="share-link">링크 생성 중...</div>
 </div>
@@ -64,14 +62,13 @@
   </div>
 
   <div id="quake-panel">
-    <div class="quake-title">⚡ 지진(지각 변동) 컨트롤</div>
-    <div style="font-size: 11px; color: #aaa;">돌 7개 이상 모인 과포화 줄을 밀어버립니다.</div>
+    <div class="quake-title">🌋 지각 변동</div>
     <select id="quake-target" style="padding: 4px; background: #0d1117; color: #fff; border: 1px solid #444; border-radius: 4px;">
-      <option value="">지진 가능 라인 없음</option>
+      <option value="">단층 없음</option>
     </select>
     <div style="display: flex; gap: 4px;">
-      <button class="quake-btn" id="quake-neg" style="flex: 1;" onclick="triggerQuake(-1)" disabled>◀ 좌/상</button>
-      <button class="quake-btn" id="quake-pos" style="flex: 1;" onclick="triggerQuake(1)" disabled>우/하 ▶</button>
+      <button class="quake-btn" id="quake-neg" style="flex: 1;" onclick="triggerQuake(-1)" disabled>◀</button>
+      <button class="quake-btn" id="quake-pos" style="flex: 1;" onclick="triggerQuake(1)" disabled>▶</button>
     </div>
   </div>
 </div>
@@ -107,7 +104,7 @@ const urlParams = new URLSearchParams(window.location.search);
 let roomId = urlParams.get('room') || Math.random().toString(36).substring(2, 8);
 if (!urlParams.get('room')) window.history.replaceState(null, '', `?room=${roomId}`);
 currentRoom = roomId;
-shareLinkEl.innerText = `친구 초대: ${window.location.href}`;
+shareLinkEl.innerText = `초대 링크: ${window.location.href}`;
 
 socket.emit('joinRoom', roomId);
 
@@ -121,7 +118,7 @@ socket.on('init', (data) => {
 });
 
 socket.on('playerCount', (count) => {
-  if (count < 2) statusEl.innerText = `내 진영: ${myRole === 1 ? '흑돌(선공)' : '백돌'} | 친구 대기 중 (1/2)`;
+  if (count < 2) statusEl.innerText = `내 돌: ${myRole === 1 ? '흑돌(선공)' : '백돌'} | 친구 대기 중 (1/2)`;
   else updateStatus();
 });
 
@@ -145,32 +142,28 @@ socket.on('updateState', (data) => {
 function updateStatus() {
   const rName = myRole === 1 ? '흑돌' : '백돌';
   const tName = currentTurn === 1 ? '흑돌' : '백돌';
-  statusEl.innerText = `내 돌: ${rName} | 현재 턴: ${tName} ${myRole === currentTurn ? '(내 차례!)' : ''}`;
+  statusEl.innerText = `${rName} | ${tName} 차례 ${myRole === currentTurn ? '(내 턴)' : ''}`;
 }
 
-// 돌 7개 이상 찬 라인(과포화 단층) 탐색 및 드롭다운 갱신
 function updateQuakeOptions() {
   const activeLines = [];
-
-  // 가로 행 체크
   for (let r = 0; r < GRID_SIZE; r++) {
     let count = board[r].filter(v => v !== 0).length;
-    if (count >= 7) activeLines.push({ type: 'row', index: r, label: `${r+1}번 가로줄 (${count}개)` });
+    if (count >= 7) activeLines.push({ type: 'row', index: r, label: `${r+1}행 (${count}개)` });
   }
-  // 세로 열 체크
   for (let c = 0; c < GRID_SIZE; c++) {
     let count = 0;
     for (let r = 0; r < GRID_SIZE; r++) if (board[r][c] !== 0) count++;
-    if (count >= 7) activeLines.push({ type: 'col', index: c, label: `${c+1}번 세로줄 (${count}개)` });
+    if (count >= 7) activeLines.push({ type: 'col', index: c, label: `${c+1}열 (${count}개)` });
   }
 
   quakeTarget.innerHTML = '';
   if (activeLines.length === 0) {
-    quakeTarget.innerHTML = '<option value="">지진 가능 라인 없음</option>';
+    quakeTarget.innerHTML = '<option value="">단층 없음</option>';
     quakeNeg.disabled = true;
     quakePos.disabled = true;
   } else {
-    activeLines.forEach((item, idx) => {
+    activeLines.forEach((item) => {
       const opt = document.createElement('option');
       opt.value = `${item.type}:${item.index}`;
       opt.innerText = item.label;
@@ -183,7 +176,7 @@ function updateQuakeOptions() {
 }
 
 function triggerQuake(dir) {
-  if (myRole !== currentTurn) return alert('내 턴이 아닙니다!');
+  if (myRole !== currentTurn) return;
   const val = quakeTarget.value;
   if (!val) return;
   const [type, idx] = val.split(':');
@@ -201,7 +194,6 @@ function drawBoard() {
     ctx.beginPath(); ctx.moveTo(p, CELL); ctx.lineTo(p, GRID_SIZE * CELL); ctx.stroke();
   }
 
-  // 꼭짓점 강조 (크러셔 영역)
   const corners = [[0,0], [0,14], [14,0], [14,14]];
   corners.forEach(([cr, cc]) => {
     ctx.strokeStyle = '#e74c3c';
@@ -209,7 +201,6 @@ function drawBoard() {
     ctx.strokeRect((cc + 1) * CELL - 12, (cr + 1) * CELL - 12, 24, 24);
   });
 
-  // 기물 렌더링
   for (let r = 0; r < GRID_SIZE; r++) {
     for (let c = 0; c < GRID_SIZE; c++) {
       const val = board[r][c];
@@ -221,7 +212,6 @@ function drawBoard() {
         ctx.fillStyle = val === 1 ? '#111' : '#f5f5f5';
         ctx.fill();
       } else if (val === 10 || val === 20) {
-        // 태양 돌
         const rad = CELL * 1.25;
         ctx.beginPath();
         ctx.arc(x, y, rad, 0, Math.PI * 2);
@@ -232,7 +222,6 @@ function drawBoard() {
         ctx.textAlign = 'center';
         ctx.fillText('SUN', x, y + 4);
       } else if (val === 100 || val === 200) {
-        // 크러셔 기물
         ctx.beginPath();
         ctx.arc(x, y, CELL * 0.45, 0, Math.PI * 2);
         ctx.fillStyle = val === 100 ? '#2c3e50' : '#bdc3c7';
@@ -248,7 +237,6 @@ function drawBoard() {
     }
   }
 
-  // 크러셔 드래그 조준선
   if (isDragging && dragOrigin) {
     ctx.beginPath();
     ctx.moveTo(dragOrigin.px, dragOrigin.py);
