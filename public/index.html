@@ -2,38 +2,80 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>카오스 슈퍼오목 온라인</title>
+<title>카오스 슈퍼오목: 지각 변동</title>
 <script src="/socket.io/socket.io.js"></script>
 <style>
   body {
-    background: #0d1117; color: #fff; font-family: sans-serif;
+    background: #0b0e14; color: #fff; font-family: sans-serif;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    min-height: 100vh; margin: 0;
+    min-height: 100vh; margin: 0; user-select: none;
   }
-  #header { margin-bottom: 12px; text-align: center; }
+  #header { margin-bottom: 8px; text-align: center; }
   .link-box {
-    background: #161b22; padding: 8px 16px; border-radius: 6px;
-    border: 1px solid #30363d; margin-top: 8px; font-size: 13px; color: #58a6ff;
+    background: #161b22; padding: 6px 14px; border-radius: 6px;
+    border: 1px solid #30363d; margin-top: 6px; font-size: 13px; color: #58a6ff;
+  }
+  #main-wrapper {
+    display: flex; align-items: center; gap: 14px;
   }
   #canvas-container {
-    position: relative; box-shadow: 0 0 30px rgba(255, 136, 0, 0.3);
-    border: 3px solid #f0883e; border-radius: 8px;
+    position: relative; box-shadow: 0 0 35px rgba(255, 69, 0, 0.35);
+    border: 3px solid #ff5722; border-radius: 8px;
   }
   canvas { background: #deb887; cursor: pointer; display: block; }
-  #log { margin-top: 10px; height: 25px; font-weight: bold; color: #ff7b72; }
+  #log { margin-top: 10px; height: 26px; font-weight: bold; color: #ff7b72; text-align: center; }
+  
+  /* 지진 제어 패널 */
+  #quake-panel {
+    background: #1c2128; border: 1px solid #ff5722; border-radius: 8px;
+    padding: 12px; width: 170px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .quake-title { font-size: 13px; font-weight: bold; color: #ff7043; text-align: center; }
+  .quake-btn {
+    background: #c0392b; color: white; border: none; padding: 6px;
+    border-radius: 4px; font-weight: bold; font-size: 12px; cursor: pointer;
+  }
+  .quake-btn:hover { background: #e74c3c; }
+  .quake-btn:disabled { background: #444; color: #888; cursor: not-allowed; }
+
+  /* 강한 화면 흔들림 애니메이션 */
+  .earthquake-shake {
+    animation: eqShake 0.7s cubic-bezier(.36,.07,.19,.97) both;
+  }
+  @keyframes eqShake {
+    10%, 90% { transform: translate3d(-6px, -4px, 0); }
+    20%, 80% { transform: translate3d(8px, 6px, 0); }
+    30%, 50%, 70% { transform: translate3d(-10px, 8px, 0); }
+    40%, 60% { transform: translate3d(10px, -8px, 0); }
+  }
 </style>
 </head>
 <body>
 
 <div id="header">
-  <h2 style="margin: 0 0 6px 0;">☄️ 카오스 슈퍼오목: 태양계 발동</h2>
-  <div id="status">상대 접속 대기 중...</div>
-  <div class="link-box" id="share-link">초대 링크 생성 중...</div>
+  <h2 style="margin: 0 0 4px 0;">🌋 카오스 슈퍼오목: 지각 변동(지진)</h2>
+  <div id="status">상대 대기 중...</div>
+  <div class="link-box" id="share-link">링크 생성 중...</div>
 </div>
 
-<div id="canvas-container">
-  <canvas id="board" width="600" height="600"></canvas>
+<div id="main-wrapper">
+  <div id="canvas-container">
+    <canvas id="board" width="600" height="600"></canvas>
+  </div>
+
+  <div id="quake-panel">
+    <div class="quake-title">⚡ 지진(지각 변동) 컨트롤</div>
+    <div style="font-size: 11px; color: #aaa;">돌 7개 이상 모인 과포화 줄을 밀어버립니다.</div>
+    <select id="quake-target" style="padding: 4px; background: #0d1117; color: #fff; border: 1px solid #444; border-radius: 4px;">
+      <option value="">지진 가능 라인 없음</option>
+    </select>
+    <div style="display: flex; gap: 4px;">
+      <button class="quake-btn" id="quake-neg" style="flex: 1;" onclick="triggerQuake(-1)" disabled>◀ 좌/상</button>
+      <button class="quake-btn" id="quake-pos" style="flex: 1;" onclick="triggerQuake(1)" disabled>우/하 ▶</button>
+    </div>
+  </div>
 </div>
+
 <div id="log"></div>
 
 <script>
@@ -43,24 +85,29 @@ const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('status');
 const logEl = document.getElementById('log');
 const shareLinkEl = document.getElementById('share-link');
+const container = document.getElementById('canvas-container');
+
+const quakeTarget = document.getElementById('quake-target');
+const quakeNeg = document.getElementById('quake-neg');
+const quakePos = document.getElementById('quake-pos');
 
 const GRID_SIZE = 15;
 const CELL = canvas.width / (GRID_SIZE + 1);
 
 let board = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0));
-let myRole = null; // 1: 흑, 2: 백
+let myRole = null;
 let currentTurn = 1;
 let currentRoom = null;
 
-// URL에서 방 ID 추출 (?room=xxxx) 없으면 랜덤 생성
+let isDragging = false;
+let dragOrigin = null;
+let currentMouse = { x: 0, y: 0 };
+
 const urlParams = new URLSearchParams(window.location.search);
-let roomId = urlParams.get('room');
-if (!roomId) {
-  roomId = Math.random().toString(36).substring(2, 8);
-  window.history.replaceState(null, '', `?room=${roomId}`);
-}
+let roomId = urlParams.get('room') || Math.random().toString(36).substring(2, 8);
+if (!urlParams.get('room')) window.history.replaceState(null, '', `?room=${roomId}`);
 currentRoom = roomId;
-shareLinkEl.innerText = `친구 초대 주소: ${window.location.href}`;
+shareLinkEl.innerText = `친구 초대: ${window.location.href}`;
 
 socket.emit('joinRoom', roomId);
 
@@ -69,40 +116,78 @@ socket.on('init', (data) => {
   board = data.board;
   currentTurn = data.turn;
   updateStatus();
+  updateQuakeOptions();
   drawBoard();
 });
 
 socket.on('playerCount', (count) => {
-  if (count < 2) {
-    statusEl.innerText = `내 돌: ${myRole === 1 ? '흑돌(선공)' : '백돌'} | 친구 기다리는 중 (1/2)`;
-  } else {
-    updateStatus();
-  }
+  if (count < 2) statusEl.innerText = `내 진영: ${myRole === 1 ? '흑돌(선공)' : '백돌'} | 친구 대기 중 (1/2)`;
+  else updateStatus();
 });
 
 socket.on('updateState', (data) => {
   board = data.board;
   currentTurn = data.turn;
   if (data.log) logEl.innerText = data.log;
-  updateStatus();
-  drawBoard();
 
-  if (data.winner) {
-    setTimeout(() => {
-      alert(data.winner === myRole ? '🎉 승리했습니다!' : '💀 패배했습니다!');
-    }, 100);
+  if (data.quake) {
+    container.classList.remove('earthquake-shake');
+    void container.offsetWidth;
+    container.classList.add('earthquake-shake');
   }
-});
 
-socket.on('roomFull', () => {
-  alert('이미 방에 2명이 가득 찼습니다.');
+  updateStatus();
+  updateQuakeOptions();
+  drawBoard();
+  if (data.winner) setTimeout(() => alert(data.winner === myRole ? '🎉 승리!' : '💀 패배!'), 100);
 });
 
 function updateStatus() {
-  const roleName = myRole === 1 ? '흑돌' : '백돌';
-  const turnName = currentTurn === 1 ? '흑돌' : '백돌';
-  const isMyTurn = myRole === currentTurn;
-  statusEl.innerText = `내 돌: ${roleName} | 현재 턴: ${turnName} ${isMyTurn ? '(내 차례!)' : '(상대 차례)'}`;
+  const rName = myRole === 1 ? '흑돌' : '백돌';
+  const tName = currentTurn === 1 ? '흑돌' : '백돌';
+  statusEl.innerText = `내 돌: ${rName} | 현재 턴: ${tName} ${myRole === currentTurn ? '(내 차례!)' : ''}`;
+}
+
+// 돌 7개 이상 찬 라인(과포화 단층) 탐색 및 드롭다운 갱신
+function updateQuakeOptions() {
+  const activeLines = [];
+
+  // 가로 행 체크
+  for (let r = 0; r < GRID_SIZE; r++) {
+    let count = board[r].filter(v => v !== 0).length;
+    if (count >= 7) activeLines.push({ type: 'row', index: r, label: `${r+1}번 가로줄 (${count}개)` });
+  }
+  // 세로 열 체크
+  for (let c = 0; c < GRID_SIZE; c++) {
+    let count = 0;
+    for (let r = 0; r < GRID_SIZE; r++) if (board[r][c] !== 0) count++;
+    if (count >= 7) activeLines.push({ type: 'col', index: c, label: `${c+1}번 세로줄 (${count}개)` });
+  }
+
+  quakeTarget.innerHTML = '';
+  if (activeLines.length === 0) {
+    quakeTarget.innerHTML = '<option value="">지진 가능 라인 없음</option>';
+    quakeNeg.disabled = true;
+    quakePos.disabled = true;
+  } else {
+    activeLines.forEach((item, idx) => {
+      const opt = document.createElement('option');
+      opt.value = `${item.type}:${item.index}`;
+      opt.innerText = item.label;
+      quakeTarget.appendChild(opt);
+    });
+    const canAct = myRole === currentTurn;
+    quakeNeg.disabled = !canAct;
+    quakePos.disabled = !canAct;
+  }
+}
+
+function triggerQuake(dir) {
+  if (myRole !== currentTurn) return alert('내 턴이 아닙니다!');
+  const val = quakeTarget.value;
+  if (!val) return;
+  const [type, idx] = val.split(':');
+  socket.emit('earthquakeMove', { roomId: currentRoom, type, index: parseInt(idx), dir });
 }
 
 function drawBoard() {
@@ -116,38 +201,108 @@ function drawBoard() {
     ctx.beginPath(); ctx.moveTo(p, CELL); ctx.lineTo(p, GRID_SIZE * CELL); ctx.stroke();
   }
 
+  // 꼭짓점 강조 (크러셔 영역)
+  const corners = [[0,0], [0,14], [14,0], [14,14]];
+  corners.forEach(([cr, cc]) => {
+    ctx.strokeStyle = '#e74c3c';
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect((cc + 1) * CELL - 12, (cr + 1) * CELL - 12, 24, 24);
+  });
+
+  // 기물 렌더링
   for (let r = 0; r < GRID_SIZE; r++) {
     for (let c = 0; c < GRID_SIZE; c++) {
       const val = board[r][c];
       const x = (c + 1) * CELL, y = (r + 1) * CELL;
+
       if (val === 1 || val === 2) {
         ctx.beginPath();
         ctx.arc(x, y, CELL * 0.4, 0, Math.PI * 2);
         ctx.fillStyle = val === 1 ? '#111' : '#f5f5f5';
         ctx.fill();
       } else if (val === 10 || val === 20) {
+        // 태양 돌
         const rad = CELL * 1.25;
-        const grad = ctx.createRadialGradient(x, y, rad * 0.2, x, y, rad);
-        grad.addColorStop(0, val === 10 ? '#ff4b1f' : '#fff275');
-        grad.addColorStop(1, val === 10 ? '#1f1c18' : '#ff6b35');
         ctx.beginPath();
         ctx.arc(x, y, rad, 0, Math.PI * 2);
-        ctx.fillStyle = grad;
+        ctx.fillStyle = val === 10 ? '#ff4b1f' : '#fff275';
         ctx.fill();
         ctx.fillStyle = '#fff';
         ctx.font = 'bold 12px sans-serif';
         ctx.textAlign = 'center';
         ctx.fillText('SUN', x, y + 4);
+      } else if (val === 100 || val === 200) {
+        // 크러셔 기물
+        ctx.beginPath();
+        ctx.arc(x, y, CELL * 0.45, 0, Math.PI * 2);
+        ctx.fillStyle = val === 100 ? '#2c3e50' : '#bdc3c7';
+        ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = '#f1c40f';
+        ctx.stroke();
+        ctx.fillStyle = '#f1c40f';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('PUSH', x, y + 4);
       }
     }
   }
+
+  // 크러셔 드래그 조준선
+  if (isDragging && dragOrigin) {
+    ctx.beginPath();
+    ctx.moveTo(dragOrigin.px, dragOrigin.py);
+    ctx.lineTo(currentMouse.x, currentMouse.y);
+    ctx.strokeStyle = '#f39c12';
+    ctx.lineWidth = 4;
+    ctx.setLineDash([6, 6]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
 }
 
-canvas.addEventListener('click', (e) => {
+canvas.addEventListener('mousedown', (e) => {
   if (myRole !== currentTurn) return;
   const rect = canvas.getBoundingClientRect();
-  const c = Math.round((e.clientX - rect.left) / CELL) - 1;
-  const r = Math.round((e.clientY - rect.top) / CELL) - 1;
+  const px = e.clientX - rect.left, py = e.clientY - rect.top;
+  const c = Math.round(px / CELL) - 1, r = Math.round(py / CELL) - 1;
+  if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) return;
+
+  if (board[r][c] === myRole * 100) {
+    isDragging = true;
+    dragOrigin = { r, c, px: (c + 1) * CELL, py: (r + 1) * CELL };
+    currentMouse = { x: px, y: py };
+  }
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  if (!isDragging) return;
+  const rect = canvas.getBoundingClientRect();
+  currentMouse.x = e.clientX - rect.left;
+  currentMouse.y = e.clientY - rect.top;
+  drawBoard();
+});
+
+canvas.addEventListener('mouseup', (e) => {
+  if (myRole !== currentTurn) return;
+  const rect = canvas.getBoundingClientRect();
+  const px = e.clientX - rect.left, py = e.clientY - rect.top;
+
+  if (isDragging && dragOrigin) {
+    const dx = px - dragOrigin.px, dy = py - dragOrigin.py;
+    if (Math.hypot(dx, dy) > 20) {
+      let dr = 0, dc = 0;
+      if (Math.abs(dx) > Math.abs(dy)) dc = dx > 0 ? 1 : -1;
+      else dr = dy > 0 ? 1 : -1;
+      socket.emit('pushMove', { roomId: currentRoom, fromR: dragOrigin.r, fromC: dragOrigin.c, dr, dc });
+    }
+    isDragging = false;
+    dragOrigin = null;
+    drawBoard();
+    return;
+  }
+
+  const c = Math.round(px / CELL) - 1, r = Math.round(py / CELL) - 1;
   if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE && board[r][c] === 0) {
     socket.emit('makeMove', { roomId: currentRoom, r, c });
   }

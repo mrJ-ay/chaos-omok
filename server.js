@@ -9,7 +9,7 @@ const io = new Server(server, { cors: { origin: "*" } });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-const rooms = {}; // roomId -> { players: [], board, turn, gameOver }
+const rooms = {};
 const GRID_SIZE = 15;
 
 io.on('connection', (socket) => {
@@ -20,7 +20,7 @@ io.on('connection', (socket) => {
         id: roomId,
         players: [],
         board: Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0)),
-        turn: 1, // 1: 흑, 2: 백
+        turn: 1,
         gameOver: false
       };
       rooms[roomId] = room;
@@ -42,44 +42,51 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('playerCount', room.players.length);
   });
 
+  // 일반 착수
   socket.on('makeMove', ({ roomId, r, c }) => {
     const room = rooms[roomId];
     if (!room || room.gameOver || room.players.length < 2) return;
 
     const player = room.players.find(p => p.id === socket.id);
-    if (!player || player.role !== room.turn) return;
-    if (room.board[r][c] !== 0) return;
+    if (!player || player.role !== room.turn || room.board[r][c] !== 0) return;
 
-    // 20% 확률 태양 돌 각성
-    const isSuperSun = Math.random() < 0.20;
-    room.board[r][c] = isSuperSun ? player.role * 10 : player.role;
+    let eventLog = '';
 
-    let eventLog = isSuperSun ? '초거대 태양 각성!' : '';
+    // 꼭짓점 각성 체크 (크러셔: 100, 200)
+    const isCorner = (r === 0 || r === GRID_SIZE - 1) && (c === 0 || c === GRID_SIZE - 1);
+    if (isCorner) {
+      room.board[r][c] = player.role * 100;
+      eventLog = `🔨 꼭짓점 각성! 철퇴 크러셔 돌 소환!`;
+    } else {
+      room.board[r][c] = player.role;
+    }
 
-    // 1. 태양계 발동 체크
+    // 日(해 일)자 완성 검사 -> 태양 융합
+    const sunPos = checkAndFuseSun(room.board, player.role);
+    if (sunPos) eventLog = `☀️ '해 일(日)' 자 완성! 6개의 돌이 거대 태양으로 융합!`;
+
+    // 태양계 발동 검사
     if (checkSolarSystem(room.board, player.role)) {
       room.gameOver = true;
       io.to(roomId).emit('updateState', {
-        board: room.board,
-        turn: room.turn,
+        board: room.board, turn: room.turn,
         log: `${player.role === 1 ? '흑돌' : '백돌'} [태양계 발동] 즉시 승리!`,
         winner: player.role
       });
       return;
     }
 
-    // 2. 십자성 80% 강탈 체크
-    if (!isSuperSun && checkCrossSteal(room.board, r, c, player.role)) {
+    // 십자성 80% 강탈
+    if (!isCorner && checkCrossSteal(room.board, r, c, player.role)) {
       const stolen = executeSteal(room.board, player.role);
-      eventLog = `십자성 완성! 상대 돌의 80%(${stolen}개) 강탈!`;
+      eventLog = `십자성(+) 완성! 상대 돌 80%(${stolen}개) 강탈!`;
     }
 
-    // 3. 일반 5목 체크
-    if (!isSuperSun && checkFive(room.board, r, c, player.role)) {
+    // 일반 5목 체크
+    if (!isCorner && checkFive(room.board, r, c, player.role)) {
       room.gameOver = true;
       io.to(roomId).emit('updateState', {
-        board: room.board,
-        turn: room.turn,
+        board: room.board, turn: room.turn,
         log: `${player.role === 1 ? '흑돌' : '백돌'} 5목 완성 승리!`,
         winner: player.role
       });
@@ -87,11 +94,90 @@ io.on('connection', (socket) => {
     }
 
     room.turn = room.turn === 1 ? 2 : 1;
+    io.to(roomId).emit('updateState', { board: room.board, turn: room.turn, log: eventLog, winner: null });
+  });
+
+  // 크러셔 밀어내기 조작
+  socket.on('pushMove', ({ roomId, fromR, fromC, dr, dc }) => {
+    const room = rooms[roomId];
+    if (!room || room.gameOver || room.players.length < 2) return;
+
+    const player = room.players.find(p => p.id === socket.id);
+    const crusherVal = player.role * 100;
+    if (!player || player.role !== room.turn || room.board[fromR][fromC] !== crusherVal) return;
+
+    let r = fromR + dr, c = fromC + dc;
+    let line = [];
+    while (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE) {
+      line.push({ r, c, val: room.board[r][c] });
+      r += dr;
+      c += dc;
+    }
+
+    for (let i = line.length - 1; i > 0; i--) {
+      line[i].val = line[i - 1].val;
+    }
+    line[0].val = 0;
+
+    room.board[fromR][fromC] = 0;
+    room.board[fromR + dr][fromC + dc] = crusherVal;
+
+    for (let i = 1; i < line.length; i++) {
+      room.board[line[i].r][line[i].c] = line[i].val;
+    }
+
+    room.turn = room.turn === 1 ? 2 : 1;
     io.to(roomId).emit('updateState', {
       board: room.board,
       turn: room.turn,
-      log: eventLog,
+      log: `🔨 크러셔 돌진! 상대 돌을 바깥으로 밀어내 소멸시켰습니다!`,
       winner: null
+    });
+  });
+
+  // 지진 (지각 변동): 특정 행/열 슬라이드
+  socket.on('earthquakeMove', ({ roomId, type, index, dir }) => {
+    // type: 'row' 또는 'col', index: 0~14, dir: -1 또는 1
+    const room = rooms[roomId];
+    if (!room || room.gameOver || room.players.length < 2) return;
+
+    const player = room.players.find(p => p.id === socket.id);
+    if (!player || player.role !== room.turn) return;
+
+    if (type === 'row') {
+      const row = room.board[index];
+      if (dir === 1) {
+        // 오른쪽으로 1칸 밀림 (맨 오른쪽 낙사, 왼쪽 0 추가)
+        row.pop();
+        row.unshift(0);
+      } else {
+        // 왼쪽으로 1칸 밀림 (맨 왼쪽 낙사, 오른쪽 0 추가)
+        row.shift();
+        row.push(0);
+      }
+    } else if (type === 'col') {
+      let col = [];
+      for (let r = 0; r < GRID_SIZE; r++) col.push(room.board[r][index]);
+
+      if (dir === 1) {
+        // 아래로 밀림
+        col.pop();
+        col.unshift(0);
+      } else {
+        // 위로 밀림
+        col.shift();
+        col.push(0);
+      }
+      for (let r = 0; r < GRID_SIZE; r++) room.board[r][index] = col[r];
+    }
+
+    room.turn = room.turn === 1 ? 2 : 1;
+    io.to(roomId).emit('updateState', {
+      board: room.board,
+      turn: room.turn,
+      log: `🌋 [지진 경보] 지각 변동 발생! ${type === 'row' ? index + 1 + '번째 가로줄' : index + 1 + '번째 세로줄'}이 슬라이딩되었습니다!`,
+      winner: null,
+      quake: true
     });
   });
 
@@ -107,6 +193,23 @@ io.on('connection', (socket) => {
     }
   });
 });
+
+function checkAndFuseSun(board, p) {
+  for (let r = 0; r <= GRID_SIZE - 3; r++) {
+    for (let c = 0; c <= GRID_SIZE - 2; c++) {
+      if (board[r][c] === p && board[r][c+1] === p &&
+          board[r+1][c] === p && board[r+1][c+1] === p &&
+          board[r+2][c] === p && board[r+2][c+1] === p) {
+        board[r][c] = 0; board[r][c+1] = 0;
+        board[r+1][c] = 0; board[r+1][c+1] = 0;
+        board[r+2][c] = 0; board[r+2][c+1] = 0;
+        board[r+1][c] = p * 10;
+        return { r: r+1, c };
+      }
+    }
+  }
+  return null;
+}
 
 function checkSolarSystem(board, p) {
   const sunVal = p * 10;
@@ -136,25 +239,25 @@ function executeSteal(board, p) {
       if (board[r][c] === opp) oppStones.push({ r, c });
     }
   }
-  const stealCount = Math.floor(oppStones.length * 0.8);
+  const count = Math.floor(oppStones.length * 0.8);
   oppStones.sort(() => Math.random() - 0.5);
-  for (let i = 0; i < stealCount; i++) {
+  for (let i = 0; i < count; i++) {
     board[oppStones[i].r][oppStones[i].c] = p;
   }
-  return stealCount;
+  return count;
 }
 
 function checkFive(board, r, c, p) {
   const dirs = [[1, 0], [0, 1], [1, 1], [1, -1]];
   for (let [dr, dc] of dirs) {
     let count = 1;
-    for (let step = 1; step < 5; step++) {
-      let nr = r + dr * step, nc = c + dc * step;
+    for (let s = 1; s < 5; s++) {
+      let nr = r + dr * s, nc = c + dc * s;
       if (nr < 0 || nr >= GRID_SIZE || nc < 0 || nc >= GRID_SIZE || board[nr][nc] !== p) break;
       count++;
     }
-    for (let step = 1; step < 5; step++) {
-      let nr = r - dr * step, nc = c - dc * step;
+    for (let s = 1; s < 5; s++) {
+      let nr = r - dr * s, nc = c - dc * s;
       if (nr < 0 || nr >= GRID_SIZE || nc < 0 || nc >= GRID_SIZE || board[nr][nc] !== p) break;
       count++;
     }
@@ -164,4 +267,4 @@ function checkFive(board, r, c, p) {
 }
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
+server.listen(PORT, () => console.log(`Server running on ${PORT}`));
