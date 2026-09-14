@@ -79,14 +79,12 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('updateState', { board: room.board, turn: room.turn, log: eventLog, winner: null });
   });
 
-  // ★ 1. 당구 알까기 시작 신호
   socket.on('startPhysics', ({ roomId, fromR, fromC, vx, vy }) => {
     const room = rooms[roomId];
     if (!room || room.gameOver || room.players.length < 2) return;
     io.to(roomId).emit('startPhysicsAnimation', { fromR, fromC, vx, vy });
   });
 
-  // ★ 2. 당구 알까기 멈춘 후 스냅 정렬
   socket.on('finalizePhysics', ({ roomId, newBoard }) => {
     const room = rooms[roomId];
     if (!room || room.gameOver || room.players.length < 2) return;
@@ -125,6 +123,13 @@ io.on('connection', (socket) => {
 
     room.gameOver = true;
     io.to(roomId).emit('updateState', { board: room.board, turn: room.turn, log: `🏳️ [${player.nickname}] 님이 기권했습니다!`, winner: winnerRole, winnerName: winnerName });
+  });
+
+  // ★ 실시간 채팅 이벤트 추가
+  socket.on('sendMessage', ({ roomId, nickname, message }) => {
+    const room = rooms[roomId];
+    if (!room) return;
+    io.to(roomId).emit('receiveMessage', { nickname, message });
   });
 
   socket.on('disconnect', () => {
