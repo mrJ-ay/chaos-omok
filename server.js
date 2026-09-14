@@ -13,7 +13,7 @@ const rooms = {};
 const GRID_SIZE = 15;
 
 io.on('connection', (socket) => {
-  socket.on('joinRoom', (roomId) => {
+  socket.on('joinRoom', ({ roomId, nickname }) => {
     let room = rooms[roomId];
     if (!room) {
       room = {
@@ -34,12 +34,24 @@ io.on('connection', (socket) => {
     socket.join(roomId);
     if (!room.players.some(p => p.id === socket.id)) {
       const role = room.players.length === 0 ? 1 : 2;
-      room.players.push({ id: socket.id, role });
+      const defaultName = role === 1 ? '흑돌 플레이어' : '백돌 플레이어';
+      room.players.push({
+        id: socket.id,
+        role,
+        nickname: (nickname && nickname.trim()) ? nickname.trim().substring(0, 8) : defaultName
+      });
     }
 
-    const myRole = room.players.find(p => p.id === socket.id).role;
-    socket.emit('init', { role: myRole, board: room.board, turn: room.turn, roomId });
-    io.to(roomId).emit('playerCount', room.players.length);
+    const myPlayer = room.players.find(p => p.id === socket.id);
+    socket.emit('init', {
+      role: myPlayer.role,
+      board: room.board,
+      turn: room.turn,
+      roomId,
+      players: room.players.map(p => ({ role: p.role, nickname: p.nickname }))
+    });
+
+    io.to(roomId).emit('updatePlayers', room.players.map(p => ({ role: p.role, nickname: p.nickname })));
   });
 
   // 일반 착수
@@ -56,22 +68,23 @@ io.on('connection', (socket) => {
     const isCorner = (r === 0 || r === GRID_SIZE - 1) && (c === 0 || c === GRID_SIZE - 1);
     if (isCorner) {
       room.board[r][c] = player.role * 100;
-      eventLog = `🔨 꼭짓점 각성! 철퇴 크러셔 돌 소환!`;
+      eventLog = `🔨 [${player.nickname}] 꼭짓점 각성! 철퇴 크러셔 돌 소환!`;
     } else {
       room.board[r][c] = player.role;
     }
 
     // 日(해 일)자 완성 검사 -> 태양 융합
     const sunPos = checkAndFuseSun(room.board, player.role);
-    if (sunPos) eventLog = `☀️ '해 일(日)' 자 완성! 6개의 돌이 거대 태양으로 융합!`;
+    if (sunPos) eventLog = `☀️ [${player.nickname}] '해 일(日)' 자 완성! 거대 태양 융합!`;
 
     // 태양계 발동 검사
     if (checkSolarSystem(room.board, player.role)) {
       room.gameOver = true;
       io.to(roomId).emit('updateState', {
         board: room.board, turn: room.turn,
-        log: `${player.role === 1 ? '흑돌' : '백돌'} [태양계 발동] 즉시 승리!`,
-        winner: player.role
+        log: `🌌 [${player.nickname}] 태양계 발동 즉시 승리!`,
+        winner: player.role,
+        winnerName: player.nickname
       });
       return;
     }
@@ -79,7 +92,7 @@ io.on('connection', (socket) => {
     // 십자성 80% 강탈
     if (!isCorner && checkCrossSteal(room.board, r, c, player.role)) {
       const stolen = executeSteal(room.board, player.role);
-      eventLog = `십자성(+) 완성! 상대 돌 80%(${stolen}개) 강탈!`;
+      eventLog = `⚡ [${player.nickname}] 십자성 완성! 상대 돌 80%(${stolen}개) 강탈!`;
     }
 
     // 일반 5목 체크
@@ -87,8 +100,9 @@ io.on('connection', (socket) => {
       room.gameOver = true;
       io.to(roomId).emit('updateState', {
         board: room.board, turn: room.turn,
-        log: `${player.role === 1 ? '흑돌' : '백돌'} 5목 완성 승리!`,
-        winner: player.role
+        log: `🎉 [${player.nickname}] 5목 완성 승리!`,
+        winner: player.role,
+        winnerName: player.nickname
       });
       return;
     }
@@ -97,7 +111,7 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('updateState', { board: room.board, turn: room.turn, log: eventLog, winner: null });
   });
 
-  // 크러셔 밀어내기 조작
+  // 크러셔 밀어내기
   socket.on('pushMove', ({ roomId, fromR, fromC, dr, dc }) => {
     const room = rooms[roomId];
     if (!room || room.gameOver || room.players.length < 2) return;
@@ -130,54 +144,8 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('updateState', {
       board: room.board,
       turn: room.turn,
-      log: `🔨 크러셔 돌진! 상대 돌을 바깥으로 밀어내 소멸시켰습니다!`,
+      log: `🔨 [${player.nickname}] 크러셔 돌진으로 상대 돌을 낙사시켰습니다!`,
       winner: null
-    });
-  });
-
-  // 지진 (지각 변동): 특정 행/열 슬라이드
-  socket.on('earthquakeMove', ({ roomId, type, index, dir }) => {
-    // type: 'row' 또는 'col', index: 0~14, dir: -1 또는 1
-    const room = rooms[roomId];
-    if (!room || room.gameOver || room.players.length < 2) return;
-
-    const player = room.players.find(p => p.id === socket.id);
-    if (!player || player.role !== room.turn) return;
-
-    if (type === 'row') {
-      const row = room.board[index];
-      if (dir === 1) {
-        // 오른쪽으로 1칸 밀림 (맨 오른쪽 낙사, 왼쪽 0 추가)
-        row.pop();
-        row.unshift(0);
-      } else {
-        // 왼쪽으로 1칸 밀림 (맨 왼쪽 낙사, 오른쪽 0 추가)
-        row.shift();
-        row.push(0);
-      }
-    } else if (type === 'col') {
-      let col = [];
-      for (let r = 0; r < GRID_SIZE; r++) col.push(room.board[r][index]);
-
-      if (dir === 1) {
-        // 아래로 밀림
-        col.pop();
-        col.unshift(0);
-      } else {
-        // 위로 밀림
-        col.shift();
-        col.push(0);
-      }
-      for (let r = 0; r < GRID_SIZE; r++) room.board[r][index] = col[r];
-    }
-
-    room.turn = room.turn === 1 ? 2 : 1;
-    io.to(roomId).emit('updateState', {
-      board: room.board,
-      turn: room.turn,
-      log: `🌋 [지진 경보] 지각 변동 발생! ${type === 'row' ? index + 1 + '번째 가로줄' : index + 1 + '번째 세로줄'}이 슬라이딩되었습니다!`,
-      winner: null,
-      quake: true
     });
   });
 
@@ -186,7 +154,7 @@ io.on('connection', (socket) => {
       const idx = room.players.findIndex(p => p.id === socket.id);
       if (idx !== -1) {
         room.players.splice(idx, 1);
-        io.to(roomId).emit('playerCount', room.players.length);
+        io.to(roomId).emit('updatePlayers', room.players.map(p => ({ role: p.role, nickname: p.nickname })));
         if (room.players.length === 0) delete rooms[roomId];
         break;
       }

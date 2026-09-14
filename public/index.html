@@ -47,21 +47,64 @@
     text-align: center;
   }
 
-  .earthquake-shake {
-    animation: eqShake 0.7s cubic-bezier(.36,.07,.19,.97) both;
+  /* 닉네임 입력 모달 */
+  #nickname-modal {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
   }
-  @keyframes eqShake {
-    10%, 90% { transform: translate3d(-6px, -4px, 0); }
-    20%, 80% { transform: translate3d(8px, 6px, 0); }
-    30%, 50%, 70% { transform: translate3d(-10px, 8px, 0); }
-    40%, 60% { transform: translate3d(10px, -8px, 0); }
+  .modal-box {
+    background: #161b22;
+    border: 1px solid #30363d;
+    padding: 24px;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 240px;
+    text-align: center;
+  }
+  .modal-box input {
+    padding: 8px 12px;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    color: #fff;
+    border-radius: 4px;
+    outline: none;
+    font-size: 14px;
+    text-align: center;
+  }
+  .modal-box button {
+    background: #238636;
+    color: white;
+    border: none;
+    padding: 8px;
+    border-radius: 4px;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  .modal-box button:hover {
+    background: #2ea043;
   }
 </style>
 </head>
 <body>
 
+<!-- 닉네임 입력 모달 -->
+<div id="nickname-modal">
+  <div class="modal-box">
+    <div style="font-weight: bold; font-size: 15px;">닉네임 입력</div>
+    <input type="text" id="nickname-input" placeholder="닉네임 (최대 8자)" maxlength="8" />
+    <button onclick="confirmNickname()">게임 입장</button>
+  </div>
+</div>
+
 <div id="header">
-  <div id="status" style="font-size: 16px; font-weight: bold;">상대 대기 중...</div>
+  <div id="status" style="font-size: 16px; font-weight: bold;">대기 중...</div>
   <div class="link-box" id="share-link">초대 링크 생성 중...</div>
 </div>
 
@@ -78,7 +121,8 @@ const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('status');
 const logEl = document.getElementById('log');
 const shareLinkEl = document.getElementById('share-link');
-const container = document.getElementById('canvas-container');
+const nicknameModal = document.getElementById('nickname-modal');
+const nicknameInput = document.getElementById('nickname-input');
 
 const GRID_SIZE = 15;
 const CELL = canvas.width / (GRID_SIZE + 1);
@@ -87,6 +131,7 @@ let board = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0));
 let myRole = null;
 let currentTurn = 1;
 let currentRoom = null;
+let players = [];
 
 let isDragging = false;
 let dragOrigin = null;
@@ -98,19 +143,35 @@ if (!urlParams.get('room')) window.history.replaceState(null, '', `?room=${roomI
 currentRoom = roomId;
 shareLinkEl.innerText = `초대 링크: ${window.location.href}`;
 
-socket.emit('joinRoom', roomId);
+// 로컬스토리지에 저장된 닉네임이 있다면 세팅
+const savedNick = localStorage.getItem('omok_nick');
+if (savedNick) nicknameInput.value = savedNick;
+
+function confirmNickname() {
+  const nick = nicknameInput.value.trim() || '플레이어';
+  localStorage.setItem('omok_nick', nick);
+  nicknameModal.style.display = 'none';
+
+  socket.emit('joinRoom', { roomId, nickname: nick });
+}
+
+// 엔터 키로도 입장 가능
+nicknameInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') confirmNickname();
+});
 
 socket.on('init', (data) => {
   myRole = data.role;
   board = data.board;
   currentTurn = data.turn;
+  players = data.players;
   updateStatus();
   drawBoard();
 });
 
-socket.on('playerCount', (count) => {
-  if (count < 2) statusEl.innerText = `${myRole === 1 ? '흑돌(선공)' : '백돌'} | 친구 대기 중 (1/2)`;
-  else updateStatus();
+socket.on('updatePlayers', (updatedPlayers) => {
+  players = updatedPlayers;
+  updateStatus();
 });
 
 socket.on('updateState', (data) => {
@@ -118,21 +179,31 @@ socket.on('updateState', (data) => {
   currentTurn = data.turn;
   if (data.log) logEl.innerText = data.log;
 
-  if (data.quake) {
-    container.classList.remove('earthquake-shake');
-    void container.offsetWidth;
-    container.classList.add('earthquake-shake');
-  }
-
   updateStatus();
   drawBoard();
-  if (data.winner) setTimeout(() => alert(data.winner === myRole ? '🎉 승리!' : '💀 패배!'), 100);
+
+  if (data.winner) {
+    setTimeout(() => {
+      const isMe = data.winner === myRole;
+      alert(isMe ? `🎉 [${data.winnerName}] 승리!` : `💀 [${data.winnerName}] 승리! (패배)`);
+    }, 100);
+  }
 });
 
 function updateStatus() {
-  const rName = myRole === 1 ? '흑돌' : '백돌';
-  const tName = currentTurn === 1 ? '흑돌' : '백돌';
-  statusEl.innerText = `${rName} | ${tName} 차례 ${myRole === currentTurn ? '(내 턴)' : ''}`;
+  const p1 = players.find(p => p.role === 1);
+  const p2 = players.find(p => p.role === 2);
+
+  const p1Name = p1 ? p1.nickname : '대기 중';
+  const p2Name = p2 ? p2.nickname : '대기 중';
+
+  if (!p2) {
+    statusEl.innerText = `[${p1Name}(흑)] vs 상대 대기 중... (1/2)`;
+  } else {
+    const turnName = currentTurn === 1 ? p1Name : p2Name;
+    const isMyTurn = myRole === currentTurn;
+    statusEl.innerText = `${p1Name}(흑) vs ${p2Name}(백) | 턴: ${turnName} ${isMyTurn ? '(내 차례)' : ''}`;
+  }
 }
 
 function drawBoard() {
@@ -140,14 +211,12 @@ function drawBoard() {
   ctx.strokeStyle = '#6b4f2c';
   ctx.lineWidth = 1.5;
 
-  // 바둑판 격자선
   for (let i = 0; i < GRID_SIZE; i++) {
     const p = (i + 1) * CELL;
     ctx.beginPath(); ctx.moveTo(CELL, p); ctx.lineTo(GRID_SIZE * CELL, p); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(p, CELL); ctx.lineTo(p, GRID_SIZE * CELL); ctx.stroke();
   }
 
-  // 돌 렌더링
   for (let r = 0; r < GRID_SIZE; r++) {
     for (let c = 0; c < GRID_SIZE; c++) {
       const val = board[r][c];
@@ -159,7 +228,6 @@ function drawBoard() {
         ctx.fillStyle = val === 1 ? '#111' : '#f5f5f5';
         ctx.fill();
       } else if (val === 10 || val === 20) {
-        // 태양 돌
         const rad = CELL * 1.25;
         ctx.beginPath();
         ctx.arc(x, y, rad, 0, Math.PI * 2);
@@ -170,7 +238,6 @@ function drawBoard() {
         ctx.textAlign = 'center';
         ctx.fillText('SUN', x, y + 4);
       } else if (val === 100 || val === 200) {
-        // 꼭짓점 크러셔
         ctx.beginPath();
         ctx.arc(x, y, CELL * 0.45, 0, Math.PI * 2);
         ctx.fillStyle = val === 100 ? '#2c3e50' : '#bdc3c7';
@@ -186,7 +253,6 @@ function drawBoard() {
     }
   }
 
-  // 크러셔 드래그 조준선
   if (isDragging && dragOrigin) {
     ctx.beginPath();
     ctx.moveTo(dragOrigin.px, dragOrigin.py);
