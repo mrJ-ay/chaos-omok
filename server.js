@@ -13,14 +13,9 @@ const rooms = {};
 const GRID_SIZE = 15;
 
 function broadcastRoomList() {
-  const roomList = Object.values(rooms)
-    .filter(r => r.players.length > 0)
-    .map(r => ({
-      id: r.id,
-      name: r.name || '카오스 오목방',
-      players: r.players.length,
-      isPlaying: r.players.length >= 2
-    }));
+  const roomList = Object.values(rooms).filter(r => r.players.length > 0).map(r => ({
+    id: r.id, name: r.name || '카오스 오목방', players: r.players.length, isPlaying: r.players.length >= 2
+  }));
   io.emit('roomList', roomList);
 }
 
@@ -29,17 +24,10 @@ io.on('connection', (socket) => {
 
   socket.on('createRoom', (roomName) => {
     const roomId = Math.random().toString(36).substring(2, 6).toUpperCase();
-    rooms[roomId] = {
-      id: roomId, name: roomName || '카오스 오목방', players: [],
-      board: Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0)),
-      turn: 1, gameOver: false
-    };
+    rooms[roomId] = { id: roomId, name: roomName || '카오스 오목방', players: [], board: Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0)), turn: 1, gameOver: false };
     socket.emit('roomCreated', roomId);
     broadcastRoomList();
-
-    setTimeout(() => {
-      if (rooms[roomId] && rooms[roomId].players.length === 0) delete rooms[roomId];
-    }, 10000);
+    setTimeout(() => { if (rooms[roomId] && rooms[roomId].players.length === 0) delete rooms[roomId]; }, 10000);
   });
 
   socket.on('joinRoom', ({ roomId, nickname }) => {
@@ -48,19 +36,12 @@ io.on('connection', (socket) => {
       room = { id: roomId, name: '비밀 방', players: [], board: Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0)), turn: 1, gameOver: false };
       rooms[roomId] = room;
     }
-    if (room.players.length >= 2 && !room.players.some(p => p.id === socket.id)) {
-      return socket.emit('roomFull');
-    }
+    if (room.players.length >= 2 && !room.players.some(p => p.id === socket.id)) return socket.emit('roomFull');
     socket.join(roomId);
     
     if (!room.players.some(p => p.id === socket.id)) {
-      const takenRoles = room.players.map(p => p.role);
-      const role = takenRoles.includes(1) ? 2 : 1; 
-      room.players.push({
-        id: socket.id,
-        role,
-        nickname: (nickname && nickname.trim()) ? nickname.trim().substring(0, 8) : (role === 1 ? '흑돌' : '백돌')
-      });
+      const role = room.players.map(p => p.role).includes(1) ? 2 : 1; 
+      room.players.push({ id: socket.id, role, nickname: (nickname && nickname.trim()) ? nickname.trim().substring(0, 8) : (role === 1 ? '흑돌' : '백돌') });
     }
     
     const myPlayer = room.players.find(p => p.id === socket.id);
@@ -78,20 +59,16 @@ io.on('connection', (socket) => {
     let eventLog = '';
     const isCorner = (r === 0 || r === GRID_SIZE - 1) && (c === 0 || c === GRID_SIZE - 1);
     
-    if (isCorner) {
-      room.board[r][c] = player.role * 100;
-      eventLog = `🔨 [${player.nickname}] 꼭짓점 각성! 철퇴 크러셔!`;
-    } else { room.board[r][c] = player.role; }
+    if (isCorner) { room.board[r][c] = player.role * 100; eventLog = `🔨 [${player.nickname}] 꼭짓점 각성! 철퇴 크러셔!`; } 
+    else { room.board[r][c] = player.role; }
 
     if (checkAndFuseSun(room.board, player.role)) eventLog = `☀️ [${player.nickname}] '해 일(日)' 자 완성! 거대 태양 융합!`;
-
     if (checkSolarSystem(room.board, player.role)) {
       room.gameOver = true;
       return io.to(roomId).emit('updateState', { board: room.board, turn: room.turn, log: `🌌 [${player.nickname}] 태양계 발동 즉시 승리!`, winner: player.role, winnerName: player.nickname });
     }
     if (!isCorner && checkCrossSteal(room.board, r, c, player.role)) {
-      const stolen = executeSteal(room.board, player.role);
-      eventLog = `⚡ [${player.nickname}] 십자성 완성! 상대 돌 80%(${stolen}개) 강탈!`;
+      eventLog = `⚡ [${player.nickname}] 십자성 완성! 상대 돌 80%(${executeSteal(room.board, player.role)}개) 강탈!`;
     }
     if (!isCorner && checkFive(room.board, r, c, player.role)) {
       room.gameOver = true;
@@ -102,38 +79,21 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('updateState', { board: room.board, turn: room.turn, log: eventLog, winner: null });
   });
 
-  socket.on('pushMove', ({ roomId, fromR, fromC, dr, dc, power }) => {
+  // ★ 1. 당구 알까기 시작 신호
+  socket.on('startPhysics', ({ roomId, fromR, fromC, vx, vy }) => {
+    const room = rooms[roomId];
+    if (!room || room.gameOver || room.players.length < 2) return;
+    io.to(roomId).emit('startPhysicsAnimation', { fromR, fromC, vx, vy });
+  });
+
+  // ★ 2. 당구 알까기 멈춘 후 스냅 정렬
+  socket.on('finalizePhysics', ({ roomId, newBoard }) => {
     const room = rooms[roomId];
     if (!room || room.gameOver || room.players.length < 2) return;
     const player = room.players.find(p => p.id === socket.id);
-    if (!player || player.role !== room.turn || room.board[fromR][fromC] !== player.role * 100) return;
-
-    let r = fromR;
-    let c = fromC;
-    let knockedOut = 0;
-
-    room.board[fromR][fromC] = 0;
-
-    for (let step = 0; step < power; step++) {
-      r += dr;
-      c += dc;
-      if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) break;
-      if (room.board[r][c] !== 0) {
-        knockedOut++;
-        room.board[r][c] = 0;
-      }
-    }
-
-    let logMsg = '';
-    if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) {
-      logMsg = `🎳 [${player.nickname}] 힘 조절 실패! 상대 돌 ${knockedOut}개와 함께 장외 낙사했습니다!`;
-    } else {
-      room.board[r][c] = player.role * 100;
-      logMsg = `🎳 [${player.nickname}] 알까기 슛! 파워 ${power}로 돌진해 ${knockedOut}개를 날렸습니다!`;
-    }
-
+    room.board = newBoard;
     room.turn = room.turn === 1 ? 2 : 1;
-    io.to(roomId).emit('updateState', { board: room.board, turn: room.turn, log: logMsg, winner: null });
+    io.to(roomId).emit('updateState', { board: room.board, turn: room.turn, log: `🎳 [${player.nickname}] 알까기 충돌 완료! 바둑판 재정렬됨.`, winner: null });
   });
 
   socket.on('earthquakeMove', ({ roomId, type, index, dir }) => {
@@ -155,26 +115,16 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('updateState', { board: room.board, turn: room.turn, log: `🌋 [${player.nickname}] 지각 변동 발동!`, winner: null, quake: true });
   });
 
-  // ★ [추가] 기권 처리
   socket.on('surrender', ({ roomId }) => {
     const room = rooms[roomId];
     if (!room || room.gameOver || room.players.length < 2) return;
-    
     const player = room.players.find(p => p.id === socket.id);
     if (!player) return;
-
     const winnerRole = player.role === 1 ? 2 : 1;
-    const winner = room.players.find(p => p.role === winnerRole);
-    const winnerName = winner ? winner.nickname : '상대방';
+    const winnerName = room.players.find(p => p.role === winnerRole)?.nickname || '상대방';
 
     room.gameOver = true;
-    io.to(roomId).emit('updateState', {
-      board: room.board,
-      turn: room.turn,
-      log: `🏳️ [${player.nickname}] 님이 멘탈이 터져 기권했습니다!`,
-      winner: winnerRole,
-      winnerName: winnerName
-    });
+    io.to(roomId).emit('updateState', { board: room.board, turn: room.turn, log: `🏳️ [${player.nickname}] 님이 기권했습니다!`, winner: winnerRole, winnerName: winnerName });
   });
 
   socket.on('disconnect', () => {

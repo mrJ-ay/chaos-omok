@@ -46,11 +46,8 @@
 const socket = io(), canvas = document.getElementById('board'), ctx = canvas.getContext('2d');
 const GRID_SIZE = 15, CELL = canvas.width / (GRID_SIZE + 1);
 let board = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0)), myRole = null, currentTurn = 1, currentRoom = null, players = [];
-
-// 물리 엔진 변수들
 let isDragging = false, dragOrigin = null, currentMouse = { x: 0, y: 0 };
-let physicsMode = false;
-let physicsStones = []; 
+let physicsMode = false, physicsStones = []; 
 
 function exitToLobby() { socket.disconnect(); window.location.href = '/'; }
 function surrender() {
@@ -74,7 +71,9 @@ document.getElementById('nickname-input').addEventListener('keydown', (e) => { i
 socket.on('init', (data) => { myRole = data.role; board = data.board; currentTurn = data.turn; players = data.players; updateStatus(); drawBoard(); });
 socket.on('updatePlayers', (updatedPlayers) => { players = updatedPlayers; updateStatus(); });
 socket.on('roomFull', () => { alert('방이 꽉 찼습니다!'); window.location.href = '/'; });
+
 socket.on('updateState', (data) => {
+  physicsMode = false; 
   board = data.board; currentTurn = data.turn; if (data.log) document.getElementById('log').innerText = data.log;
   if (data.quake) { document.getElementById('canvas-container').classList.remove('earthquake-shake'); void document.getElementById('canvas-container').offsetWidth; document.getElementById('canvas-container').classList.add('earthquake-shake'); }
   updateStatus(); drawBoard();
@@ -88,24 +87,48 @@ function updateStatus() {
   else document.getElementById('status').innerHTML = `<span style="color:#a0aec0">${p1Name}(흑) vs ${p2Name}(백)</span><br/><span style="color:${myRole===currentTurn?'#ff4b1f':'#fff'}">턴: ${currentTurn===1?p1Name:p2Name} ${myRole===currentTurn?'(내 차례!)':''}</span>`;
 }
 
-// 돌 크기 가져오기
-function getStoneRadius(val) {
+function getStoneRadius(val) { 
   if (val === 10 || val === 20) return CELL * 1.25; // 태양
-  if (val === 100 || val === 200) return CELL * 0.45; // 크러셔
+  if (val === 100 || val === 200) return CELL * 0.45; // 알까기 쭈
   return CELL * 0.4; // 일반돌
 }
 
-// 개별 돌 렌더링 함수
+// ★ 장기 쭈 모양(卒) 렌더링 적용
 function drawStone(x, y, val) {
   if (val === 1 || val === 2) { 
+    // 일반 오목돌
     ctx.beginPath(); ctx.arc(x, y, CELL * 0.4, 0, Math.PI * 2); ctx.fillStyle = val === 1 ? '#111' : '#f5f5f5'; ctx.fill(); 
   } else if (val === 10 || val === 20) { 
+    // 태양돌
     ctx.beginPath(); ctx.arc(x, y, CELL * 1.25, 0, Math.PI * 2); ctx.fillStyle = val === 10 ? '#ff4b1f' : '#fff275'; ctx.fill(); 
     ctx.fillStyle = '#fff'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('SUN', x, y + 4); 
   } else if (val === 100 || val === 200) { 
-    ctx.beginPath(); ctx.arc(x, y, CELL * 0.45, 0, Math.PI * 2); ctx.fillStyle = val === 100 ? '#2c3e50' : '#bdc3c7'; ctx.fill(); 
-    ctx.lineWidth = 3; ctx.strokeStyle = '#f1c40f'; ctx.stroke(); ctx.fillStyle = '#f1c40f'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('PUSH', x, y + 4); 
+    // ★ 알까기 크러셔 -> 장기 '卒(쭈)' 모양 패로 렌더링
+    const radius = CELL * 0.45;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = val === 100 ? '#1a1a1a' : '#e0e0e0'; // 흑은 진한 남색/검정, 백은 밝은 은색
+    ctx.fill();
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = '#f1c40f'; // 황금색 테두리
+    ctx.stroke();
+
+    // 안쪽 글자 '卒'
+    ctx.fillStyle = val === 100 ? '#fff' : '#111';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('卒', x, y);
   }
+}
+
+function checkSevenSame(lineArray) {
+  let blackCnt = 0, whiteCnt = 0;
+  for (let v of lineArray) {
+    if (v === 1 || v === 10 || v === 100) blackCnt++;
+    if (v === 2 || v === 20 || v === 200) whiteCnt++;
+  }
+  return blackCnt >= 7 || whiteCnt >= 7;
 }
 
 function drawBoard() {
@@ -114,29 +137,27 @@ function drawBoard() {
   
   if (myRole === currentTurn && !physicsMode) {
     ctx.fillStyle = '#ff4b1f'; ctx.font = '22px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    for (let r = 0; r < GRID_SIZE; r++) if (board[r].filter(v => v !== 0).length >= 7) { ctx.fillText('◀', CELL * 0.4, (r + 1) * CELL); ctx.fillText('▶', CELL * 15.6, (r + 1) * CELL); }
-    for (let c = 0; c < GRID_SIZE; c++) { let cnt = 0; for (let r = 0; r < GRID_SIZE; r++) if (board[r][c] !== 0) cnt++; if (cnt >= 7) { ctx.fillText('▲', (c + 1) * CELL, CELL * 0.4); ctx.fillText('▼', (c + 1) * CELL, CELL * 15.6); } }
+    for (let r = 0; r < GRID_SIZE; r++) { if (checkSevenSame(board[r])) { ctx.fillText('◀', CELL * 0.4, (r + 1) * CELL); ctx.fillText('▶', CELL * 15.6, (r + 1) * CELL); } }
+    for (let c = 0; c < GRID_SIZE; c++) {
+      let col = []; for (let r = 0; r < GRID_SIZE; r++) col.push(board[r][c]);
+      if (checkSevenSame(col)) { ctx.fillText('▲', (c + 1) * CELL, CELL * 0.4); ctx.fillText('▼', (c + 1) * CELL, CELL * 15.6); }
+    }
   }
   
   [[0,0], [0,14], [14,0], [14,14]].forEach(([cr, cc]) => { ctx.strokeStyle = 'rgba(231, 76, 60, 0.5)'; ctx.lineWidth = 2; ctx.strokeRect((cc + 1) * CELL - 12, (cr + 1) * CELL - 12, 24, 24); });
   
   if (physicsMode) {
-    // 물리 엔진 작동 중엔 자유 좌표로 렌더링
     physicsStones.forEach(s => { if (s.active) drawStone(s.x, s.y, s.val); });
   } else {
-    // 평소엔 격자 맞춰서 렌더링
     for (let r = 0; r < GRID_SIZE; r++) for (let c = 0; c < GRID_SIZE; c++) {
       if (board[r][c] !== 0) drawStone((c + 1) * CELL, (r + 1) * CELL, board[r][c]);
     }
   }
 
-  // 조준선
   if (isDragging && dragOrigin && !physicsMode) {
     const dx = dragOrigin.px - currentMouse.x, dy = dragOrigin.py - currentMouse.y;
     ctx.beginPath(); ctx.moveTo(dragOrigin.px, dragOrigin.py); ctx.lineTo(currentMouse.x, currentMouse.y);
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)'; ctx.lineWidth = 2; ctx.stroke();
-    
-    // 당긴 방향의 반대로 조준 (힘에 비례해서 선이 길어짐)
     ctx.beginPath(); ctx.moveTo(dragOrigin.px, dragOrigin.py); ctx.lineTo(dragOrigin.px + dx * 2, dragOrigin.py + dy * 2);
     ctx.strokeStyle = '#ff4b1f'; ctx.lineWidth = 4; ctx.setLineDash([6, 6]); ctx.stroke(); ctx.setLineDash([]);
   }
@@ -149,146 +170,95 @@ canvas.addEventListener('mousedown', (e) => {
     isDragging = true; dragOrigin = { r, c, px: (c + 1) * CELL, py: (r + 1) * CELL }; currentMouse = { x: px, y: py }; 
   }
 });
-
 canvas.addEventListener('mousemove', (e) => { 
   if (!isDragging || physicsMode) return; 
   const rect = canvas.getBoundingClientRect(); currentMouse.x = e.clientX - rect.left; currentMouse.y = e.clientY - rect.top; drawBoard(); 
 });
-
 canvas.addEventListener('mouseup', (e) => {
   if (myRole !== currentTurn || physicsMode) return; 
   const rect = canvas.getBoundingClientRect(), px = e.clientX - rect.left, py = e.clientY - rect.top;
   
   if (isDragging && dragOrigin) {
-    // 앵그리버드식 반대 방향 계산
     const dx = dragOrigin.px - px, dy = dragOrigin.py - py, dist = Math.hypot(dx, dy);
     if (dist > 15) { 
-      // 당긴 거리에 비례한 초기 발사 속도 (최대 속도 제한)
-      let vx = dx * 0.2; let vy = dy * 0.2;
-      const speed = Math.hypot(vx, vy);
-      if (speed > 40) { vx = (vx/speed)*40; vy = (vy/speed)*40; } // 파워 캡
-      
+      let vx = dx * 0.2, vy = dy * 0.2, speed = Math.hypot(vx, vy);
+      if (speed > 40) { vx = (vx/speed)*40; vy = (vy/speed)*40; }
       socket.emit('startPhysics', { roomId: currentRoom, fromR: dragOrigin.r, fromC: dragOrigin.c, vx, vy }); 
     }
     isDragging = false; dragOrigin = null; drawBoard(); return;
   }
   
   const c = Math.round(px / CELL - 1), r = Math.round(py / CELL - 1);
-  if (c === -1 && r >= 0 && r < GRID_SIZE && board[r].filter(v => v !== 0).length >= 7) return socket.emit('earthquakeMove', { roomId: currentRoom, type: 'row', index: r, dir: 1 });
-  if (c === 15 && r >= 0 && r < GRID_SIZE && board[r].filter(v => v !== 0).length >= 7) return socket.emit('earthquakeMove', { roomId: currentRoom, type: 'row', index: r, dir: -1 });
-  if (r === -1 && c >= 0 && c < GRID_SIZE) { let cnt = 0; for(let i=0; i<GRID_SIZE; i++) if(board[i][c]!==0) cnt++; if (cnt >= 7) return socket.emit('earthquakeMove', { roomId: currentRoom, type: 'col', index: c, dir: 1 }); }
-  if (r === 15 && c >= 0 && c < GRID_SIZE) { let cnt = 0; for(let i=0; i<GRID_SIZE; i++) if(board[i][c]!==0) cnt++; if (cnt >= 7) return socket.emit('earthquakeMove', { roomId: currentRoom, type: 'col', index: c, dir: -1 }); }
+  if (c === -1 && r >= 0 && r < GRID_SIZE && checkSevenSame(board[r])) return socket.emit('earthquakeMove', { roomId: currentRoom, type: 'row', index: r, dir: 1 });
+  if (c === 15 && r >= 0 && r < GRID_SIZE && checkSevenSame(board[r])) return socket.emit('earthquakeMove', { roomId: currentRoom, type: 'row', index: r, dir: -1 });
+  if (r === -1 && c >= 0 && c < GRID_SIZE) { 
+    let col = []; for(let i=0; i<GRID_SIZE; i++) col.push(board[i][c]);
+    if (checkSevenSame(col)) return socket.emit('earthquakeMove', { roomId: currentRoom, type: 'col', index: c, dir: 1 }); 
+  }
+  if (r === 15 && c >= 0 && c < GRID_SIZE) { 
+    let col = []; for(let i=0; i<GRID_SIZE; i++) col.push(board[i][c]);
+    if (checkSevenSame(col)) return socket.emit('earthquakeMove', { roomId: currentRoom, type: 'col', index: c, dir: -1 }); 
+  }
+  
   if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE && board[r][c] === 0) socket.emit('makeMove', { roomId: currentRoom, r, c });
 });
 
-
-// ==========================================
-// ★ 진성 알까기 물리 엔진 파트
-// ==========================================
 socket.on('startPhysicsAnimation', ({ fromR, fromC, vx, vy }) => {
-  physicsMode = true;
-  physicsStones = [];
-  
-  // 현재 바둑판의 모든 돌을 물리 엔진 객체로 변환
+  physicsMode = true; physicsStones = [];
   for (let r=0; r<GRID_SIZE; r++) {
     for (let c=0; c<GRID_SIZE; c++) {
       if (board[r][c] !== 0) {
         physicsStones.push({
           x: (c+1)*CELL, y: (r+1)*CELL,
-          vx: (r === fromR && c === fromC) ? vx : 0, // 당긴 돌만 발사 속도 부여
-          vy: (r === fromR && c === fromC) ? vy : 0,
-          val: board[r][c],
-          radius: getStoneRadius(board[r][c]),
-          mass: (board[r][c] === 10 || board[r][c] === 20) ? 5 : 1, // 태양은 5배 무거움
-          active: true
+          vx: (r === fromR && c === fromC) ? vx : 0, vy: (r === fromR && c === fromC) ? vy : 0,
+          val: board[r][c], radius: getStoneRadius(board[r][c]),
+          mass: (board[r][c] === 10 || board[r][c] === 20) ? 5 : 1, active: true
         });
       }
     }
   }
-  
-  // 60FPS 애니메이션 루프 시작
   requestAnimationFrame(physicsLoop);
 });
 
 function physicsLoop() {
   let isMoving = false;
-  
-  // 1. 위치 업데이트 및 마찰력(점점 느려짐)
   physicsStones.forEach(s => {
     if (!s.active) return;
-    s.x += s.vx;
-    s.y += s.vy;
-    s.vx *= 0.96; // 마찰력 (자연스럽게 미끄러지다 멈춤)
-    s.vy *= 0.96;
-    
-    if (Math.hypot(s.vx, s.vy) > 0.1) isMoving = true;
-    else { s.vx = 0; s.vy = 0; } // 완전히 정지
-    
-    // 장외 낙사 판정 (캔버스 밖으로 나가면 즉사)
-    if (s.x < 0 || s.x > canvas.width || s.y < 0 || s.y > canvas.height) {
-      s.active = false;
-    }
+    s.x += s.vx; s.y += s.vy; s.vx *= 0.96; s.vy *= 0.96;
+    if (Math.hypot(s.vx, s.vy) > 0.1) isMoving = true; else { s.vx = 0; s.vy = 0; }
+    if (s.x < 0 || s.x > canvas.width || s.y < 0 || s.y > canvas.height) s.active = false;
   });
 
-  // 2. 돌끼리 2D 원형 충돌 판정 (당구 매커니즘)
   for (let i=0; i<physicsStones.length; i++) {
     for (let j=i+1; j<physicsStones.length; j++) {
       let s1 = physicsStones[i], s2 = physicsStones[j];
       if (!s1.active || !s2.active) continue;
-      
-      let dx = s2.x - s1.x, dy = s2.y - s1.y;
-      let dist = Math.hypot(dx, dy);
-      let minDist = s1.radius + s2.radius; // 두 돌의 반지름 합
-      
+      let dx = s2.x - s1.x, dy = s2.y - s1.y, dist = Math.hypot(dx, dy), minDist = s1.radius + s2.radius;
       if (dist < minDist && dist > 0) {
-        // 겹침 방지 (살짝 밀어내기)
-        let overlap = minDist - dist;
-        let nx = dx / dist, ny = dy / dist;
-        s1.x -= nx * (overlap / 2);
-        s2.x += nx * (overlap / 2);
-        
-        // 반발 계수 적용 (80%만 에너지 전달)
-        let rvx = s1.vx - s2.vx, rvy = s1.vy - s2.vy;
-        let velAlongNormal = rvx * nx + rvy * ny;
-        
+        let overlap = minDist - dist, nx = dx / dist, ny = dy / dist;
+        s1.x -= nx * (overlap / 2); s2.x += nx * (overlap / 2);
+        let rvx = s1.vx - s2.vx, rvy = s1.vy - s2.vy, velAlongNormal = rvx * nx + rvy * ny;
         if (velAlongNormal > 0) {
-          let restitution = 0.8; // 80% 튕김
-          let jImpulse = -(1 + restitution) * velAlongNormal / (1/s1.mass + 1/s2.mass);
-          
-          s1.vx += (jImpulse / s1.mass) * nx;
-          s1.vy += (jImpulse / s1.mass) * ny;
-          s2.vx -= (jImpulse / s2.mass) * nx;
-          s2.vy -= (jImpulse / s2.mass) * ny;
+          let restitution = 0.8, jImpulse = -(1 + restitution) * velAlongNormal / (1/s1.mass + 1/s2.mass);
+          s1.vx += (jImpulse / s1.mass) * nx; s1.vy += (jImpulse / s1.mass) * ny;
+          s2.vx -= (jImpulse / s2.mass) * nx; s2.vy -= (jImpulse / s2.mass) * ny;
         }
       }
     }
   }
-
   drawBoard();
-
-  if (isMoving) {
-    requestAnimationFrame(physicsLoop);
-  } else {
-    physicsMode = false;
-    // 모든 움직임이 멈추면 턴을 가진 유저가 결과를 바둑판(Grid)에 스냅해서 서버로 전송
-    if (myRole === currentTurn) finalizePhysicsState();
-  }
+  if (isMoving) requestAnimationFrame(physicsLoop);
+  else { physicsMode = false; if (myRole === currentTurn) finalizePhysicsState(); }
 }
 
-// 멈춘 돌들을 바둑판 칸(교차점)에 찰칵! 하고 맞춰넣기
 function finalizePhysicsState() {
   let newBoard = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0));
-  
   physicsStones.forEach(s => {
     if (s.active) {
-      let c = Math.round(s.x / CELL) - 1;
-      let r = Math.round(s.y / CELL) - 1;
-      
+      let c = Math.round(s.x / CELL) - 1, r = Math.round(s.y / CELL) - 1;
       if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE) {
-        if (newBoard[r][c] === 0) {
-          newBoard[r][c] = s.val;
-        } else {
-          // 이미 그 칸에 다른 돌이 밀려와 있다면, 주변 3x3 빈칸으로 튕겨서 스냅
+        if (newBoard[r][c] === 0) newBoard[r][c] = s.val;
+        else {
           let placed = false;
           for (let dr = -1; dr <= 1 && !placed; dr++) {
             for (let dc = -1; dc <= 1 && !placed; dc++) {
@@ -302,7 +272,6 @@ function finalizePhysicsState() {
       }
     }
   });
-  
   socket.emit('finalizePhysics', { roomId: currentRoom, newBoard });
 }
 </script>
