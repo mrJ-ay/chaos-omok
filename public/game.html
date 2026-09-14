@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>카오스 슈퍼오목</title>
+<script src="/socket.io/socket.io.js"></script>
+<style>
+  body { background: #0d1117; color: #c9d1d9; font-family: -apple-system, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; user-select: none; }
+  #header { margin-bottom: 12px; text-align: center; }
+  .link-box { background: #161b22; padding: 6px 14px; border-radius: 6px; border: 1px solid #30363d; margin-top: 6px; font-size: 15px; color: #58a6ff; }
+  #canvas-container { position: relative; }
+  canvas { background: #deb887; cursor: pointer; display: block; border-radius: 6px; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+  #log { margin-top: 16px; height: 24px; font-weight: bold; color: #ff7b72; text-align: center; }
+  #nickname-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.85); display: flex; align-items: center; justify-content: center; z-index: 100; backdrop-filter: blur(4px); }
+  .modal-box { background: #161b22; border: 1px solid #30363d; padding: 24px; border-radius: 8px; display: flex; flex-direction: column; gap: 12px; width: 260px; text-align: center; }
+  .modal-box input { padding: 10px; background: #0d1117; border: 1px solid #4a5568; color: #fff; border-radius: 4px; outline: none; font-size: 15px; text-align: center; }
+  .modal-box button { background: linear-gradient(135deg, #ff4b1f, #ff6b35); color: white; border: none; padding: 10px; border-radius: 4px; font-weight: bold; cursor: pointer; }
+  .earthquake-shake { animation: eqShake 0.7s cubic-bezier(.36,.07,.19,.97) both; }
+  @keyframes eqShake { 10%, 90% { transform: translate3d(-6px, -4px, 0); } 20%, 80% { transform: translate3d(8px, 6px, 0); } 30%, 50%, 70% { transform: translate3d(-10px, 8px, 0); } 40%, 60% { transform: translate3d(10px, -8px, 0); } }
+</style>
+</head>
+<body>
+<div id="nickname-modal">
+  <div class="modal-box">
+    <div style="font-weight: bold; font-size: 18px; color: #ff9068;">전투 준비</div>
+    <div style="font-size: 12px; color: #a0aec0;">사용할 닉네임을 입력하세요.</div>
+    <input type="text" id="nickname-input" placeholder="최대 8글자" maxlength="8" />
+    <button onclick="confirmNickname()">방 입장하기</button>
+  </div>
+</div>
+<div id="header">
+  <div id="status" style="font-size: 18px; font-weight: bold;">대기 중...</div>
+  <div class="link-box">방 코드: <span id="room-code-display" style="color: #ff7b72; font-weight: bold; letter-spacing: 2px;"></span></div>
+</div>
+<div id="canvas-container"><canvas id="board" width="600" height="600"></canvas></div>
+<div id="log">우리가 알던 얌전한 오목은 끝났다.</div>
+<script>
+const socket = io(), canvas = document.getElementById('board'), ctx = canvas.getContext('2d');
+const GRID_SIZE = 15, CELL = canvas.width / (GRID_SIZE + 1);
+let board = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0)), myRole = null, currentTurn = 1, currentRoom = null, players = [];
+let isDragging = false, dragOrigin = null, currentMouse = { x: 0, y: 0 };
+
+let roomId = new URLSearchParams(window.location.search).get('room') || Math.random().toString(36).substring(2, 6).toUpperCase();
+window.history.replaceState(null, '', `?room=${roomId}`); currentRoom = roomId;
+document.getElementById('room-code-display').innerText = currentRoom;
+
+const savedNick = localStorage.getItem('omok_nick');
+if (savedNick) document.getElementById('nickname-input').value = savedNick;
+function confirmNickname() {
+  const nick = document.getElementById('nickname-input').value.trim() || '플레이어';
+  localStorage.setItem('omok_nick', nick); document.getElementById('nickname-modal').style.display = 'none';
+  socket.emit('joinRoom', { roomId: currentRoom, nickname: nick });
+}
+document.getElementById('nickname-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') confirmNickname(); });
+
+socket.on('init', (data) => { myRole = data.role; board = data.board; currentTurn = data.turn; players = data.players; updateStatus(); drawBoard(); });
+socket.on('updatePlayers', (updatedPlayers) => { players = updatedPlayers; updateStatus(); });
+socket.on('roomFull', () => { alert('방이 꽉 찼습니다!'); window.location.href = '/'; });
+socket.on('updateState', (data) => {
+  board = data.board; currentTurn = data.turn; if (data.log) document.getElementById('log').innerText = data.log;
+  if (data.quake) { document.getElementById('canvas-container').classList.remove('earthquake-shake'); void document.getElementById('canvas-container').offsetWidth; document.getElementById('canvas-container').classList.add('earthquake-shake'); }
+  updateStatus(); drawBoard();
+  if (data.winner) setTimeout(() => { alert(data.winner === myRole ? `🎉 [${data.winnerName}] 승리!` : `💀 [${data.winnerName}] 승리! 당신은 패배했습니다.`); window.location.href = '/'; }, 500);
+});
+
+function updateStatus() {
+  const p1 = players.find(p => p.role === 1), p2 = players.find(p => p.role === 2);
+  const p1Name = p1 ? p1.nickname : '대기 중', p2Name = p2 ? p2.nickname : '대기 중';
+  if (!p2) document.getElementById('status').innerText = `[${p1Name}(흑)] vs 상대 기다리는 중... (1/2)`;
+  else document.getElementById('status').innerHTML = `<span style="color:#a0aec0">${p1Name}(흑) vs ${p2Name}(백)</span><br/><span style="color:${myRole===currentTurn?'#ff4b1f':'#fff'}">턴: ${currentTurn===1?p1Name:p2Name} ${myRole===currentTurn?'(내 차례!)':''}</span>`;
+}
+
+function drawBoard() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.strokeStyle = '#6b4f2c'; ctx.lineWidth = 1.5;
+  for (let i = 0; i < GRID_SIZE; i++) { const p = (i + 1) * CELL; ctx.beginPath(); ctx.moveTo(CELL, p); ctx.lineTo(GRID_SIZE * CELL, p); ctx.stroke(); ctx.beginPath(); ctx.moveTo(p, CELL); ctx.lineTo(p, GRID_SIZE * CELL); ctx.stroke(); }
+  if (myRole === currentTurn) {
+    ctx.fillStyle = '#ff4b1f'; ctx.font = '22px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (let r = 0; r < GRID_SIZE; r++) if (board[r].filter(v => v !== 0).length >= 7) { ctx.fillText('◀', CELL * 0.4, (r + 1) * CELL); ctx.fillText('▶', CELL * 15.6, (r + 1) * CELL); }
+    for (let c = 0; c < GRID_SIZE; c++) { let cnt = 0; for (let r = 0; r < GRID_SIZE; r++) if (board[r][c] !== 0) cnt++; if (cnt >= 7) { ctx.fillText('▲', (c + 1) * CELL, CELL * 0.4); ctx.fillText('▼', (c + 1) * CELL, CELL * 15.6); } }
+  }
+  [[0,0], [0,14], [14,0], [14,14]].forEach(([cr, cc]) => { ctx.strokeStyle = 'rgba(231, 76, 60, 0.5)'; ctx.lineWidth = 2; ctx.strokeRect((cc + 1) * CELL - 12, (cr + 1) * CELL - 12, 24, 24); });
+  for (let r = 0; r < GRID_SIZE; r++) for (let c = 0; c < GRID_SIZE; c++) {
+    const val = board[r][c], x = (c + 1) * CELL, y = (r + 1) * CELL;
+    if (val === 1 || val === 2) { ctx.beginPath(); ctx.arc(x, y, CELL * 0.4, 0, Math.PI * 2); ctx.fillStyle = val === 1 ? '#111' : '#f5f5f5'; ctx.fill(); }
+    else if (val === 10 || val === 20) { ctx.beginPath(); ctx.arc(x, y, CELL * 1.25, 0, Math.PI * 2); ctx.fillStyle = val === 10 ? '#ff4b1f' : '#fff275'; ctx.fill(); ctx.fillStyle = '#fff'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('SUN', x, y + 4); }
+    else if (val === 100 || val === 200) { ctx.beginPath(); ctx.arc(x, y, CELL * 0.45, 0, Math.PI * 2); ctx.fillStyle = val === 100 ? '#2c3e50' : '#bdc3c7'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = '#f1c40f'; ctx.stroke(); ctx.fillStyle = '#f1c40f'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('PUSH', x, y + 4); }
+  }
+  if (isDragging && dragOrigin) { ctx.beginPath(); ctx.moveTo(dragOrigin.px, dragOrigin.py); ctx.lineTo(currentMouse.x, currentMouse.y); ctx.strokeStyle = '#f39c12'; ctx.lineWidth = 4; ctx.setLineDash([6, 6]); ctx.stroke(); ctx.setLineDash([]); }
+}
+
+canvas.addEventListener('mousedown', (e) => {
+  if (myRole !== currentTurn) return; const rect = canvas.getBoundingClientRect(), px = e.clientX - rect.left, py = e.clientY - rect.top, c = Math.round(px / CELL) - 1, r = Math.round(py / CELL) - 1;
+  if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE && board[r][c] === myRole * 100) { isDragging = true; dragOrigin = { r, c, px: (c + 1) * CELL, py: (r + 1) * CELL }; currentMouse = { x: px, y: py }; }
+});
+canvas.addEventListener('mousemove', (e) => { if (!isDragging) return; const rect = canvas.getBoundingClientRect(); currentMouse.x = e.clientX - rect.left; currentMouse.y = e.clientY - rect.top; drawBoard(); });
+canvas.addEventListener('mouseup', (e) => {
+  if (myRole !== currentTurn) return; const rect = canvas.getBoundingClientRect(), px = e.clientX - rect.left, py = e.clientY - rect.top;
+  if (isDragging && dragOrigin) {
+    const dx = px - dragOrigin.px, dy = py - dragOrigin.py;
+    if (Math.hypot(dx, dy) > 20) { let dr = 0, dc = 0; if (Math.abs(dx) > Math.abs(dy)) dc = dx > 0 ? 1 : -1; else dr = dy > 0 ? 1 : -1; socket.emit('pushMove', { roomId: currentRoom, fromR: dragOrigin.r, fromC: dragOrigin.c, dr, dc }); }
+    isDragging = false; dragOrigin = null; drawBoard(); return;
+  }
+  const c = Math.round(px / CELL - 1), r = Math.round(py / CELL - 1);
+  if (c === -1 && r >= 0 && r < GRID_SIZE && board[r].filter(v => v !== 0).length >= 7) return socket.emit('earthquakeMove', { roomId: currentRoom, type: 'row', index: r, dir: 1 });
+  if (c === 15 && r >= 0 && r < GRID_SIZE && board[r].filter(v => v !== 0).length >= 7) return socket.emit('earthquakeMove', { roomId: currentRoom, type: 'row', index: r, dir: -1 });
+  if (r === -1 && c >= 0 && c < GRID_SIZE) { let cnt = 0; for(let i=0; i<GRID_SIZE; i++) if(board[i][c]!==0) cnt++; if (cnt >= 7) return socket.emit('earthquakeMove', { roomId: currentRoom, type: 'col', index: c, dir: 1 }); }
+  if (r === 15 && c >= 0 && c < GRID_SIZE) { let cnt = 0; for(let i=0; i<GRID_SIZE; i++) if(board[i][c]!==0) cnt++; if (cnt >= 7) return socket.emit('earthquakeMove', { roomId: currentRoom, type: 'col', index: c, dir: -1 }); }
+  if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE && board[r][c] === 0) socket.emit('makeMove', { roomId: currentRoom, r, c });
+});
+</script>
+</body>
+</html>

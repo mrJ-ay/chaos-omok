@@ -2,315 +2,68 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>카오스 슈퍼오목</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CHAOS SUPER OMOK LOBBY</title>
 <script src="/socket.io/socket.io.js"></script>
 <style>
-  body {
-    background: #0d1117;
-    color: #c9d1d9;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 100vh;
-    margin: 0;
-    user-select: none;
-  }
-  #header {
-    margin-bottom: 12px;
-    text-align: center;
-  }
-  .link-box {
-    background: #161b22;
-    padding: 6px 14px;
-    border-radius: 6px;
-    border: 1px solid #30363d;
-    margin-top: 6px;
-    font-size: 13px;
-    color: #58a6ff;
-  }
-  #canvas-container {
-    position: relative;
-  }
-  canvas {
-    background: #deb887;
-    cursor: pointer;
-    display: block;
-    border-radius: 4px;
-  }
-  #log {
-    margin-top: 12px;
-    height: 24px;
-    font-weight: bold;
-    color: #ff7b72;
-    text-align: center;
-  }
-
-  /* 닉네임 입력 모달 */
-  #nickname-modal {
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0, 0, 0, 0.75);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
-  }
-  .modal-box {
-    background: #161b22;
-    border: 1px solid #30363d;
-    padding: 24px;
-    border-radius: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    width: 240px;
-    text-align: center;
-  }
-  .modal-box input {
-    padding: 8px 12px;
-    background: #0d1117;
-    border: 1px solid #30363d;
-    color: #fff;
-    border-radius: 4px;
-    outline: none;
-    font-size: 14px;
-    text-align: center;
-  }
-  .modal-box button {
-    background: #238636;
-    color: white;
-    border: none;
-    padding: 8px;
-    border-radius: 4px;
-    font-weight: bold;
-    cursor: pointer;
-  }
-  .modal-box button:hover {
-    background: #2ea043;
-  }
+  body { background: #05070a; color: #e2e8f0; font-family: -apple-system, sans-serif; margin: 0; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+  .header { margin-top: 40px; text-align: center; }
+  .title { font-size: 3.5rem; font-weight: 900; margin: 0; background: linear-gradient(to right, #ff4b1f, #ff9068); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .lobby-container { width: 100%; max-width: 800px; margin-top: 40px; background: #11151c; border: 1px solid #2d3748; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+  .lobby-header { display: flex; justify-content: space-between; align-items: center; background: #1a202c; padding: 20px; border-bottom: 1px solid #2d3748; }
+  .lobby-title { font-size: 1.2rem; font-weight: bold; }
+  .btn-create { background: linear-gradient(135deg, #ff4b1f, #ff6b35); color: white; border: none; padding: 10px 20px; border-radius: 6px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+  .btn-create:hover { transform: scale(1.05); }
+  .room-list { display: flex; flex-direction: column; max-height: 500px; overflow-y: auto; }
+  .room-item { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid #2d3748; transition: 0.2s; }
+  .room-item:hover { background: #1a202c; }
+  .room-info { display: flex; flex-direction: column; gap: 4px; }
+  .room-name { font-size: 1.1rem; font-weight: bold; color: #fff; }
+  .room-status { font-size: 0.85rem; color: #a0aec0; }
+  .status-badge { padding: 4px 10px; border-radius: 20px; font-size: 0.8rem; font-weight: bold; }
+  .badge-wait { background: #238636; color: white; }
+  .badge-full { background: #c53030; color: white; }
+  .btn-join { background: #2b6cb0; color: white; border: none; padding: 8px 16px; border-radius: 4px; font-weight: bold; cursor: pointer; }
+  .btn-join:hover { background: #3182ce; }
+  .btn-join:disabled { background: #4a5568; cursor: not-allowed; }
+  .empty-msg { text-align: center; padding: 40px; color: #718096; }
 </style>
 </head>
 <body>
-
-<!-- 닉네임 입력 모달 -->
-<div id="nickname-modal">
-  <div class="modal-box">
-    <div style="font-weight: bold; font-size: 15px;">닉네임 입력</div>
-    <input type="text" id="nickname-input" placeholder="닉네임 (최대 8자)" maxlength="8" />
-    <button onclick="confirmNickname()">게임 입장</button>
+<div class="header">
+  <h1 class="title">CHAOS OMOK</h1>
+  <div style="color: #a0aec0; margin-top: 10px;">멀티플레이 실시간 로비</div>
+</div>
+<div class="lobby-container">
+  <div class="lobby-header">
+    <div class="lobby-title">대기 중인 방 목록</div>
+    <button class="btn-create" onclick="openCreatePrompt()">+ 새 방 만들기</button>
   </div>
+  <div class="room-list" id="room-list"><div class="empty-msg">서버에 연결 중입니다...</div></div>
 </div>
-
-<div id="header">
-  <div id="status" style="font-size: 16px; font-weight: bold;">대기 중...</div>
-  <div class="link-box" id="share-link">초대 링크 생성 중...</div>
-</div>
-
-<div id="canvas-container">
-  <canvas id="board" width="600" height="600"></canvas>
-</div>
-
-<div id="log"></div>
-
 <script>
-const socket = io();
-const canvas = document.getElementById('board');
-const ctx = canvas.getContext('2d');
-const statusEl = document.getElementById('status');
-const logEl = document.getElementById('log');
-const shareLinkEl = document.getElementById('share-link');
-const nicknameModal = document.getElementById('nickname-modal');
-const nicknameInput = document.getElementById('nickname-input');
-
-const GRID_SIZE = 15;
-const CELL = canvas.width / (GRID_SIZE + 1);
-
-let board = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0));
-let myRole = null;
-let currentTurn = 1;
-let currentRoom = null;
-let players = [];
-
-let isDragging = false;
-let dragOrigin = null;
-let currentMouse = { x: 0, y: 0 };
-
-const urlParams = new URLSearchParams(window.location.search);
-let roomId = urlParams.get('room') || Math.random().toString(36).substring(2, 8);
-if (!urlParams.get('room')) window.history.replaceState(null, '', `?room=${roomId}`);
-currentRoom = roomId;
-shareLinkEl.innerText = `초대 링크: ${window.location.href}`;
-
-// 로컬스토리지에 저장된 닉네임이 있다면 세팅
-const savedNick = localStorage.getItem('omok_nick');
-if (savedNick) nicknameInput.value = savedNick;
-
-function confirmNickname() {
-  const nick = nicknameInput.value.trim() || '플레이어';
-  localStorage.setItem('omok_nick', nick);
-  nicknameModal.style.display = 'none';
-
-  socket.emit('joinRoom', { roomId, nickname: nick });
-}
-
-// 엔터 키로도 입장 가능
-nicknameInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') confirmNickname();
-});
-
-socket.on('init', (data) => {
-  myRole = data.role;
-  board = data.board;
-  currentTurn = data.turn;
-  players = data.players;
-  updateStatus();
-  drawBoard();
-});
-
-socket.on('updatePlayers', (updatedPlayers) => {
-  players = updatedPlayers;
-  updateStatus();
-});
-
-socket.on('updateState', (data) => {
-  board = data.board;
-  currentTurn = data.turn;
-  if (data.log) logEl.innerText = data.log;
-
-  updateStatus();
-  drawBoard();
-
-  if (data.winner) {
-    setTimeout(() => {
-      const isMe = data.winner === myRole;
-      alert(isMe ? `🎉 [${data.winnerName}] 승리!` : `💀 [${data.winnerName}] 승리! (패배)`);
-    }, 100);
+  const socket = io();
+  const roomListEl = document.getElementById('room-list');
+  function openCreatePrompt() {
+    const roomName = prompt("방 제목을 입력하세요:", "카오스 한 판 붙자");
+    if (roomName !== null) socket.emit('createRoom', roomName.trim() || '이름 없는 방');
   }
-});
-
-function updateStatus() {
-  const p1 = players.find(p => p.role === 1);
-  const p2 = players.find(p => p.role === 2);
-
-  const p1Name = p1 ? p1.nickname : '대기 중';
-  const p2Name = p2 ? p2.nickname : '대기 중';
-
-  if (!p2) {
-    statusEl.innerText = `[${p1Name}(흑)] vs 상대 대기 중... (1/2)`;
-  } else {
-    const turnName = currentTurn === 1 ? p1Name : p2Name;
-    const isMyTurn = myRole === currentTurn;
-    statusEl.innerText = `${p1Name}(흑) vs ${p2Name}(백) | 턴: ${turnName} ${isMyTurn ? '(내 차례)' : ''}`;
-  }
-}
-
-function drawBoard() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.strokeStyle = '#6b4f2c';
-  ctx.lineWidth = 1.5;
-
-  for (let i = 0; i < GRID_SIZE; i++) {
-    const p = (i + 1) * CELL;
-    ctx.beginPath(); ctx.moveTo(CELL, p); ctx.lineTo(GRID_SIZE * CELL, p); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(p, CELL); ctx.lineTo(p, GRID_SIZE * CELL); ctx.stroke();
-  }
-
-  for (let r = 0; r < GRID_SIZE; r++) {
-    for (let c = 0; c < GRID_SIZE; c++) {
-      const val = board[r][c];
-      const x = (c + 1) * CELL, y = (r + 1) * CELL;
-
-      if (val === 1 || val === 2) {
-        ctx.beginPath();
-        ctx.arc(x, y, CELL * 0.4, 0, Math.PI * 2);
-        ctx.fillStyle = val === 1 ? '#111' : '#f5f5f5';
-        ctx.fill();
-      } else if (val === 10 || val === 20) {
-        const rad = CELL * 1.25;
-        ctx.beginPath();
-        ctx.arc(x, y, rad, 0, Math.PI * 2);
-        ctx.fillStyle = val === 10 ? '#ff4b1f' : '#fff275';
-        ctx.fill();
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 12px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('SUN', x, y + 4);
-      } else if (val === 100 || val === 200) {
-        ctx.beginPath();
-        ctx.arc(x, y, CELL * 0.45, 0, Math.PI * 2);
-        ctx.fillStyle = val === 100 ? '#2c3e50' : '#bdc3c7';
-        ctx.fill();
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = '#f1c40f';
-        ctx.stroke();
-        ctx.fillStyle = '#f1c40f';
-        ctx.font = 'bold 11px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('PUSH', x, y + 4);
-      }
-    }
-  }
-
-  if (isDragging && dragOrigin) {
-    ctx.beginPath();
-    ctx.moveTo(dragOrigin.px, dragOrigin.py);
-    ctx.lineTo(currentMouse.x, currentMouse.y);
-    ctx.strokeStyle = '#f39c12';
-    ctx.lineWidth = 4;
-    ctx.setLineDash([6, 6]);
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
-}
-
-canvas.addEventListener('mousedown', (e) => {
-  if (myRole !== currentTurn) return;
-  const rect = canvas.getBoundingClientRect();
-  const px = e.clientX - rect.left, py = e.clientY - rect.top;
-  const c = Math.round(px / CELL) - 1, r = Math.round(py / CELL) - 1;
-  if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) return;
-
-  if (board[r][c] === myRole * 100) {
-    isDragging = true;
-    dragOrigin = { r, c, px: (c + 1) * CELL, py: (r + 1) * CELL };
-    currentMouse = { x: px, y: py };
-  }
-});
-
-canvas.addEventListener('mousemove', (e) => {
-  if (!isDragging) return;
-  const rect = canvas.getBoundingClientRect();
-  currentMouse.x = e.clientX - rect.left;
-  currentMouse.y = e.clientY - rect.top;
-  drawBoard();
-});
-
-canvas.addEventListener('mouseup', (e) => {
-  if (myRole !== currentTurn) return;
-  const rect = canvas.getBoundingClientRect();
-  const px = e.clientX - rect.left, py = e.clientY - rect.top;
-
-  if (isDragging && dragOrigin) {
-    const dx = px - dragOrigin.px, dy = py - dragOrigin.py;
-    if (Math.hypot(dx, dy) > 20) {
-      let dr = 0, dc = 0;
-      if (Math.abs(dx) > Math.abs(dy)) dc = dx > 0 ? 1 : -1;
-      else dr = dy > 0 ? 1 : -1;
-      socket.emit('pushMove', { roomId: currentRoom, fromR: dragOrigin.r, fromC: dragOrigin.c, dr, dc });
-    }
-    isDragging = false;
-    dragOrigin = null;
-    drawBoard();
-    return;
-  }
-
-  const c = Math.round(px / CELL) - 1, r = Math.round(py / CELL) - 1;
-  if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE && board[r][c] === 0) {
-    socket.emit('makeMove', { roomId: currentRoom, r, c });
-  }
-});
+  socket.on('roomCreated', (roomId) => { window.location.href = `/game.html?room=${roomId}`; });
+  socket.on('roomList', (rooms) => {
+    roomListEl.innerHTML = '';
+    if (rooms.length === 0) return roomListEl.innerHTML = '<div class="empty-msg">현재 열려있는 방이 없습니다. 새 방을 만들어보세요!</div>';
+    rooms.forEach(room => {
+      const isFull = room.players >= 2, statusClass = isFull ? 'badge-full' : 'badge-wait';
+      const statusText = isFull ? '게임 중 (2/2)' : '대기 중 (1/2)', btnState = isFull ? 'disabled' : '';
+      roomListEl.insertAdjacentHTML('beforeend', `
+        <div class="room-item">
+          <div class="room-info"><div class="room-name">${room.name}</div><div class="room-status"><span class="status-badge ${statusClass}">${statusText}</span>&nbsp; 코드: ${room.id}</div></div>
+          <button class="btn-join" ${btnState} onclick="joinRoom('${room.id}')">${isFull ? '입장 불가' : '입장하기'}</button>
+        </div>
+      `);
+    });
+  });
+  function joinRoom(roomId) { window.location.href = `/game.html?room=${roomId}`; }
 </script>
 </body>
 </html>
