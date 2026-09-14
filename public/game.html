@@ -29,17 +29,41 @@
     <button onclick="confirmNickname()">방 입장하기</button>
   </div>
 </div>
+
 <div id="header">
-  <div id="status" style="font-size: 18px; font-weight: bold;">대기 중...</div>
+  <div style="display: flex; justify-content: center; align-items: center; gap: 10px; margin-bottom: 8px;">
+    <button onclick="exitToLobby()" style="background: #4a5568; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s;" onmouseover="this.style.background='#718096'" onmouseout="this.style.background='#4a5568'">🔙 로비로</button>
+    <button onclick="surrender()" style="background: #c53030; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s;" onmouseover="this.style.background='#e53e3e'" onmouseout="this.style.background='#c53030'">🏳️ 기권하기</button>
+    <div id="status" style="font-size: 16px; font-weight: bold; margin-left: 5px;">대기 중...</div>
+  </div>
   <div class="link-box">방 코드: <span id="room-code-display" style="color: #ff7b72; font-weight: bold; letter-spacing: 2px;"></span></div>
 </div>
+
 <div id="canvas-container"><canvas id="board" width="600" height="600"></canvas></div>
 <div id="log">우리가 알던 얌전한 오목은 끝났다.</div>
+
 <script>
 const socket = io(), canvas = document.getElementById('board'), ctx = canvas.getContext('2d');
 const GRID_SIZE = 15, CELL = canvas.width / (GRID_SIZE + 1);
 let board = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(0)), myRole = null, currentTurn = 1, currentRoom = null, players = [];
 let isDragging = false, dragOrigin = null, currentMouse = { x: 0, y: 0 };
+
+function exitToLobby() {
+  socket.disconnect();
+  window.location.href = '/';
+}
+
+// ★ [추가] 기권 함수
+function surrender() {
+  if (players.length < 2) return alert('아직 상대가 들어오지 않았습니다.');
+  if (confirm('정말로 기권하시겠습니까? (즉시 패배 처리됩니다)')) {
+    socket.emit('surrender', { roomId: currentRoom });
+  }
+}
+
+window.addEventListener('beforeunload', () => socket.disconnect());
+window.addEventListener('pagehide', () => socket.disconnect());
+window.addEventListener('pageshow', (e) => { if (e.persisted) window.location.reload(); });
 
 let roomId = new URLSearchParams(window.location.search).get('room') || Math.random().toString(36).substring(2, 6).toUpperCase();
 window.history.replaceState(null, '', `?room=${roomId}`); currentRoom = roomId;
@@ -86,7 +110,16 @@ function drawBoard() {
     else if (val === 10 || val === 20) { ctx.beginPath(); ctx.arc(x, y, CELL * 1.25, 0, Math.PI * 2); ctx.fillStyle = val === 10 ? '#ff4b1f' : '#fff275'; ctx.fill(); ctx.fillStyle = '#fff'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('SUN', x, y + 4); }
     else if (val === 100 || val === 200) { ctx.beginPath(); ctx.arc(x, y, CELL * 0.45, 0, Math.PI * 2); ctx.fillStyle = val === 100 ? '#2c3e50' : '#bdc3c7'; ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = '#f1c40f'; ctx.stroke(); ctx.fillStyle = '#f1c40f'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('PUSH', x, y + 4); }
   }
-  if (isDragging && dragOrigin) { ctx.beginPath(); ctx.moveTo(dragOrigin.px, dragOrigin.py); ctx.lineTo(currentMouse.x, currentMouse.y); ctx.strokeStyle = '#f39c12'; ctx.lineWidth = 4; ctx.setLineDash([6, 6]); ctx.stroke(); ctx.setLineDash([]); }
+  if (isDragging && dragOrigin) {
+    const dx = currentMouse.x - dragOrigin.px;
+    const dy = currentMouse.y - dragOrigin.py;
+    ctx.beginPath(); ctx.moveTo(dragOrigin.px, dragOrigin.py); ctx.lineTo(currentMouse.x, currentMouse.y);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)'; ctx.lineWidth = 2; ctx.stroke();
+    const aimX = dragOrigin.px - dx;
+    const aimY = dragOrigin.py - dy;
+    ctx.beginPath(); ctx.moveTo(dragOrigin.px, dragOrigin.py); ctx.lineTo(aimX, aimY);
+    ctx.strokeStyle = '#ff4b1f'; ctx.lineWidth = 4; ctx.setLineDash([6, 6]); ctx.stroke(); ctx.setLineDash([]);
+  }
 }
 
 canvas.addEventListener('mousedown', (e) => {
@@ -97,8 +130,13 @@ canvas.addEventListener('mousemove', (e) => { if (!isDragging) return; const rec
 canvas.addEventListener('mouseup', (e) => {
   if (myRole !== currentTurn) return; const rect = canvas.getBoundingClientRect(), px = e.clientX - rect.left, py = e.clientY - rect.top;
   if (isDragging && dragOrigin) {
-    const dx = px - dragOrigin.px, dy = py - dragOrigin.py;
-    if (Math.hypot(dx, dy) > 20) { let dr = 0, dc = 0; if (Math.abs(dx) > Math.abs(dy)) dc = dx > 0 ? 1 : -1; else dr = dy > 0 ? 1 : -1; socket.emit('pushMove', { roomId: currentRoom, fromR: dragOrigin.r, fromC: dragOrigin.c, dr, dc }); }
+    const dx = px - dragOrigin.px, dy = py - dragOrigin.py, dist = Math.hypot(dx, dy);
+    if (dist > 20) {
+      let dr = 0, dc = 0;
+      if (Math.abs(dx) > Math.abs(dy)) dc = dx > 0 ? -1 : 1; else dr = dy > 0 ? -1 : 1;
+      let power = Math.floor(dist / (CELL * 0.8)); if (power < 1) power = 1;
+      socket.emit('pushMove', { roomId: currentRoom, fromR: dragOrigin.r, fromC: dragOrigin.c, dr, dc, power });
+    }
     isDragging = false; dragOrigin = null; drawBoard(); return;
   }
   const c = Math.round(px / CELL - 1), r = Math.round(py / CELL - 1);

@@ -14,7 +14,7 @@ const GRID_SIZE = 15;
 
 function broadcastRoomList() {
   const roomList = Object.values(rooms)
-    .filter(r => r.players.length > 0) // [수정] 0명인 유령 방은 로비에 노출하지 않음
+    .filter(r => r.players.length > 0)
     .map(r => ({
       id: r.id,
       name: r.name || '카오스 오목방',
@@ -37,11 +37,8 @@ io.on('connection', (socket) => {
     socket.emit('roomCreated', roomId);
     broadcastRoomList();
 
-    // 10초 후에도 아무도 접속 안 한 고아 방은 메모리에서 삭제
     setTimeout(() => {
-      if (rooms[roomId] && rooms[roomId].players.length === 0) {
-        delete rooms[roomId];
-      }
+      if (rooms[roomId] && rooms[roomId].players.length === 0) delete rooms[roomId];
     }, 10000);
   });
 
@@ -57,10 +54,8 @@ io.on('connection', (socket) => {
     socket.join(roomId);
     
     if (!room.players.some(p => p.id === socket.id)) {
-      // [수정] 이미 있는 플레이어의 역할을 확인해서 남은 자리에 배정
       const takenRoles = room.players.map(p => p.role);
       const role = takenRoles.includes(1) ? 2 : 1; 
-      
       room.players.push({
         id: socket.id,
         role,
@@ -107,21 +102,38 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('updateState', { board: room.board, turn: room.turn, log: eventLog, winner: null });
   });
 
-  socket.on('pushMove', ({ roomId, fromR, fromC, dr, dc }) => {
+  socket.on('pushMove', ({ roomId, fromR, fromC, dr, dc, power }) => {
     const room = rooms[roomId];
     if (!room || room.gameOver || room.players.length < 2) return;
     const player = room.players.find(p => p.id === socket.id);
     if (!player || player.role !== room.turn || room.board[fromR][fromC] !== player.role * 100) return;
 
-    let r = fromR + dr, c = fromC + dc, line = [];
-    while (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE) { line.push({ r, c, val: room.board[r][c] }); r += dr; c += dc; }
-    for (let i = line.length - 1; i > 0; i--) line[i].val = line[i - 1].val;
-    line[0].val = 0;
-    room.board[fromR][fromC] = 0; room.board[fromR + dr][fromC + dc] = player.role * 100;
-    for (let i = 1; i < line.length; i++) room.board[line[i].r][line[i].c] = line[i].val;
+    let r = fromR;
+    let c = fromC;
+    let knockedOut = 0;
+
+    room.board[fromR][fromC] = 0;
+
+    for (let step = 0; step < power; step++) {
+      r += dr;
+      c += dc;
+      if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) break;
+      if (room.board[r][c] !== 0) {
+        knockedOut++;
+        room.board[r][c] = 0;
+      }
+    }
+
+    let logMsg = '';
+    if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) {
+      logMsg = `🎳 [${player.nickname}] 힘 조절 실패! 상대 돌 ${knockedOut}개와 함께 장외 낙사했습니다!`;
+    } else {
+      room.board[r][c] = player.role * 100;
+      logMsg = `🎳 [${player.nickname}] 알까기 슛! 파워 ${power}로 돌진해 ${knockedOut}개를 날렸습니다!`;
+    }
 
     room.turn = room.turn === 1 ? 2 : 1;
-    io.to(roomId).emit('updateState', { board: room.board, turn: room.turn, log: `🔨 [${player.nickname}] 크러셔 돌진! 상대 낙사!`, winner: null });
+    io.to(roomId).emit('updateState', { board: room.board, turn: room.turn, log: logMsg, winner: null });
   });
 
   socket.on('earthquakeMove', ({ roomId, type, index, dir }) => {
@@ -143,16 +155,35 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('updateState', { board: room.board, turn: room.turn, log: `🌋 [${player.nickname}] 지각 변동 발동!`, winner: null, quake: true });
   });
 
+  // ★ [추가] 기권 처리
+  socket.on('surrender', ({ roomId }) => {
+    const room = rooms[roomId];
+    if (!room || room.gameOver || room.players.length < 2) return;
+    
+    const player = room.players.find(p => p.id === socket.id);
+    if (!player) return;
+
+    const winnerRole = player.role === 1 ? 2 : 1;
+    const winner = room.players.find(p => p.role === winnerRole);
+    const winnerName = winner ? winner.nickname : '상대방';
+
+    room.gameOver = true;
+    io.to(roomId).emit('updateState', {
+      board: room.board,
+      turn: room.turn,
+      log: `🏳️ [${player.nickname}] 님이 멘탈이 터져 기권했습니다!`,
+      winner: winnerRole,
+      winnerName: winnerName
+    });
+  });
+
   socket.on('disconnect', () => {
     for (const [roomId, room] of Object.entries(rooms)) {
       const idx = room.players.findIndex(p => p.id === socket.id);
       if (idx !== -1) {
         room.players.splice(idx, 1);
         io.to(roomId).emit('updatePlayers', room.players.map(p => ({ role: p.role, nickname: p.nickname })));
-        
-        if (room.players.length === 0) {
-          delete rooms[roomId]; // 아무도 없으면 방 완전 폭파
-        }
+        if (room.players.length === 0) delete rooms[roomId]; 
         broadcastRoomList();
         break;
       }

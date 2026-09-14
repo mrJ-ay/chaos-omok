@@ -42,6 +42,9 @@
   <div class="room-list" id="room-list"><div class="empty-msg">서버에 연결 중입니다...</div></div>
 </div>
 <script>
+  // 뒤로가기로 로비 진입 시 굳어있는 캐시(BFCache) 타파하여 최신 방 목록 갱신
+  window.addEventListener('pageshow', (e) => { if (e.persisted) window.location.reload(); });
+
   const socket = io();
   const roomListEl = document.getElementById('room-list');
   
@@ -59,7 +62,6 @@
     rooms.forEach(room => {
       const isFull = room.players >= 2;
       const statusClass = isFull ? 'badge-full' : 'badge-wait';
-      // [수정] 1/2 로 고정되어 있던 하드코딩 제거하고 실제 room.players 값으로 변경
       const statusText = isFull ? '게임 중 (2/2)' : `대기 중 (${room.players}/2)`; 
       const btnState = isFull ? 'disabled' : '';
       
