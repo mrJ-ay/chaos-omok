@@ -44,25 +44,39 @@
 <script>
   const socket = io();
   const roomListEl = document.getElementById('room-list');
+  
   function openCreatePrompt() {
     const roomName = prompt("방 제목을 입력하세요:", "카오스 한 판 붙자");
     if (roomName !== null) socket.emit('createRoom', roomName.trim() || '이름 없는 방');
   }
+  
   socket.on('roomCreated', (roomId) => { window.location.href = `/game.html?room=${roomId}`; });
+  
   socket.on('roomList', (rooms) => {
     roomListEl.innerHTML = '';
     if (rooms.length === 0) return roomListEl.innerHTML = '<div class="empty-msg">현재 열려있는 방이 없습니다. 새 방을 만들어보세요!</div>';
+    
     rooms.forEach(room => {
-      const isFull = room.players >= 2, statusClass = isFull ? 'badge-full' : 'badge-wait';
-      const statusText = isFull ? '게임 중 (2/2)' : '대기 중 (1/2)', btnState = isFull ? 'disabled' : '';
+      const isFull = room.players >= 2;
+      const statusClass = isFull ? 'badge-full' : 'badge-wait';
+      // [수정] 1/2 로 고정되어 있던 하드코딩 제거하고 실제 room.players 값으로 변경
+      const statusText = isFull ? '게임 중 (2/2)' : `대기 중 (${room.players}/2)`; 
+      const btnState = isFull ? 'disabled' : '';
+      
       roomListEl.insertAdjacentHTML('beforeend', `
         <div class="room-item">
-          <div class="room-info"><div class="room-name">${room.name}</div><div class="room-status"><span class="status-badge ${statusClass}">${statusText}</span>&nbsp; 코드: ${room.id}</div></div>
+          <div class="room-info">
+            <div class="room-name">${room.name}</div>
+            <div class="room-status">
+              <span class="status-badge ${statusClass}">${statusText}</span>&nbsp; 코드: ${room.id}
+            </div>
+          </div>
           <button class="btn-join" ${btnState} onclick="joinRoom('${room.id}')">${isFull ? '입장 불가' : '입장하기'}</button>
         </div>
       `);
     });
   });
+  
   function joinRoom(roomId) { window.location.href = `/game.html?room=${roomId}`; }
 </script>
 </body>

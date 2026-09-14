@@ -13,19 +13,19 @@ const rooms = {};
 const GRID_SIZE = 15;
 
 function broadcastRoomList() {
-  const roomList = Object.values(rooms).map(r => ({
-    id: r.id,
-    name: r.name || '카오스 오목방',
-    players: r.players.length,
-    isPlaying: r.players.length >= 2
-  }));
+  const roomList = Object.values(rooms)
+    .filter(r => r.players.length > 0) // [수정] 0명인 유령 방은 로비에 노출하지 않음
+    .map(r => ({
+      id: r.id,
+      name: r.name || '카오스 오목방',
+      players: r.players.length,
+      isPlaying: r.players.length >= 2
+    }));
   io.emit('roomList', roomList);
 }
 
 io.on('connection', (socket) => {
-  socket.emit('roomList', Object.values(rooms).map(r => ({
-    id: r.id, name: r.name || '카오스 오목방', players: r.players.length, isPlaying: r.players.length >= 2
-  })));
+  broadcastRoomList();
 
   socket.on('createRoom', (roomName) => {
     const roomId = Math.random().toString(36).substring(2, 6).toUpperCase();
@@ -36,6 +36,13 @@ io.on('connection', (socket) => {
     };
     socket.emit('roomCreated', roomId);
     broadcastRoomList();
+
+    // 10초 후에도 아무도 접속 안 한 고아 방은 메모리에서 삭제
+    setTimeout(() => {
+      if (rooms[roomId] && rooms[roomId].players.length === 0) {
+        delete rooms[roomId];
+      }
+    }, 10000);
   });
 
   socket.on('joinRoom', ({ roomId, nickname }) => {
@@ -48,10 +55,19 @@ io.on('connection', (socket) => {
       return socket.emit('roomFull');
     }
     socket.join(roomId);
+    
     if (!room.players.some(p => p.id === socket.id)) {
-      const role = room.players.length === 0 ? 1 : 2;
-      room.players.push({ id: socket.id, role, nickname: (nickname && nickname.trim()) ? nickname.trim().substring(0, 8) : (role === 1 ? '흑돌' : '백돌') });
+      // [수정] 이미 있는 플레이어의 역할을 확인해서 남은 자리에 배정
+      const takenRoles = room.players.map(p => p.role);
+      const role = takenRoles.includes(1) ? 2 : 1; 
+      
+      room.players.push({
+        id: socket.id,
+        role,
+        nickname: (nickname && nickname.trim()) ? nickname.trim().substring(0, 8) : (role === 1 ? '흑돌' : '백돌')
+      });
     }
+    
     const myPlayer = room.players.find(p => p.id === socket.id);
     socket.emit('init', { role: myPlayer.role, board: room.board, turn: room.turn, roomId, players: room.players.map(p => ({ role: p.role, nickname: p.nickname })) });
     io.to(roomId).emit('updatePlayers', room.players.map(p => ({ role: p.role, nickname: p.nickname })));
@@ -133,7 +149,10 @@ io.on('connection', (socket) => {
       if (idx !== -1) {
         room.players.splice(idx, 1);
         io.to(roomId).emit('updatePlayers', room.players.map(p => ({ role: p.role, nickname: p.nickname })));
-        if (room.players.length === 0) delete rooms[roomId];
+        
+        if (room.players.length === 0) {
+          delete rooms[roomId]; // 아무도 없으면 방 완전 폭파
+        }
         broadcastRoomList();
         break;
       }
